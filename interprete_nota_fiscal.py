@@ -31,7 +31,7 @@ def processa_nota():
     
     return None
     
-
+# testw
 def convert_nota_fiscal(arquivos_bytes):
    imagens= convert_from_bytes(arquivos_bytes)
    return imagens
