@@ -15,7 +15,12 @@ import io
 def convert_nota_fiscal(arquivos_bytes, tipo):
     """Lida com PDF ou Imagens e retorna uma lista de imagens (PIL)"""
     if tipo == "pdf":
-        return convert_from_bytes(arquivos_bytes)
+        
+        caminho_poppler = r"C:\Users\renata.machado\Release-26.07.0-0\poppler-26.07.0\Library\bin"
+        
+        # Forçando o pdf2image a olhar para essa pasta
+        return convert_from_bytes(arquivos_bytes, poppler_path=caminho_poppler)
+        
     elif tipo in ["png", "jpg", "jpeg"]:
         img = Image.open(io.BytesIO(arquivos_bytes))
         return [img]
@@ -23,16 +28,9 @@ def convert_nota_fiscal(arquivos_bytes, tipo):
 
 def ler_qrcode_imagem(imagem_pill):
     """Usa o OpenCV nativo para ler QR Code"""
-    # Converte a imagem para o formato do OpenCV
     imagem_np = np.array(imagem_pill)
-    
-    # Chama o leitor nativo do OpenCV
     detector = cv2.QRCodeDetector()
-    
-    # Tenta ler o QR Code
     texto, bbox, _ = detector.detectAndDecode(imagem_np)
-    
-    # Retorna o texto dentro de uma lista se encontrar algo
     if texto:
         return [texto]
     return []
@@ -49,16 +47,50 @@ def extrair_texto_unico(lista_imagens):
 # ==========================================
 
 def numero_nfe(texto):
-    match = re.search(r'N[ºo]\s*[:]?\s*(\d+)', texto, re.IGNORECASE)
-    return match.group(1) if match else ""
+    # Lista de padrões que podem aparecer na nota (do mais específico para o mais genérico)
+    padroes = [
+        r'Número da Nota/Série\s*([\d\.]+)\s*/',  # Ex: Número da Nota/Série 2.245.430/NFE
+        r'RPS no\.\s*([\d\.]+)',                  # Ex: RPS no. 215.183
+        r'N[uú]mero\s*da\s*Nota\s*[:]?\s*(\d+)',  # Ex: Número da Nota: 12345
+        r'NFS-e\s*N[ºo]?\s*[:]?\s*(\d+)',         # Ex: NFS-e Nº 12345
+        r'N[ºo]\s*[:]?\s*(\d+)'                   # Ex: Nº: 12345 (Padrão mais genérico)
+    ]
+    
+    for padrao in padroes:
+        match = re.search(padrao, texto, re.IGNORECASE)
+        if match:
+            # Retorna tirando possíveis pontos (ex: 2.245.430 vira 2245430)
+            return match.group(1).replace('.', '')
+            
+    return ""
 
 def emissao_nota(texto):
-    match = re.search(r'Emissão\s*[:]?\s*(\d{2}/\d{2}/\d{4})', texto, re.IGNORECASE)
-    return match.group(1) if match else ""
+    padroes = [
+        r'Data e Hora de Emissão\s*(\d{2}/\d{2}/\d{4})', 
+        r'Emitido em\s*[:]?\s*(\d{2}/\d{2}/\d{4})',       # Ex: Emitido em: 20/07/2026
+        r'Data\s*de\s*Emissão\s*[:]?\s*(\d{2}/\d{2}/\d{4})', # Padrão mais comum
+        r'Competência\s*[:]?\s*(\d{2}/\d{2}/\d{4})'       # Algumas notas usam competência
+    ]
+    
+    for padrao in padroes:
+        match = re.search(padrao, texto, re.IGNORECASE)
+        if match:
+            return match.group(1)
+            
+    return ""
 
 def vencimento(texto):
-    match = re.search(r'Vencimento\s*[:]?\s*(\d{2}/\d{2}/\d{4})', texto, re.IGNORECASE)
-    return match.group(1) if match else ""
+    padroes = [
+        r'Vencimento\s*[:]?\s*(\d{2}/\d{2}/\d{4})', # Ex: Vencimento: 20/07/2026
+        r'Data de Vencimento\s*[:]?\s*(\d{2}/\d{2}/\d{4})' # Padrão mais comum
+    ]
+    
+    for padrao in padroes:
+        match = re.search(padrao, texto, re.IGNORECASE)
+        if match:
+            return match.group(1)
+            
+    return ""
 
 def cnpj_emitente(texto):
     cnpjs = re.findall(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', texto)
@@ -69,10 +101,18 @@ def cnpj_pagador(texto):
     return cnpjs[1] if len(cnpjs) > 1 else ""
 
 def valor_total(texto):
-    match = re.search(r'Valor Total.*?(\d{1,3}(?:\.\d{3})*,\d{2})', texto, re.IGNORECASE)
-    if match:
-        valor_str = match.group(1).replace('.', '').replace(',', '.')
-        return float(valor_str)
+    padroes = [
+        r'Valor Total.*?(\d{1,3}(?:\.\d{3})*,\d{2})',
+        r'Valor do Servi[çc]o.*?(\d{1,3}(?:\.\d{3})*,\d{2})',
+        r'Total.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})'
+    ]
+    
+    for padrao in padroes:
+        match = re.search(padrao, texto, re.IGNORECASE | re.DOTALL)
+        if match:
+            valor_str = match.group(1).replace('.', '').replace(',', '.')
+            return float(valor_str)
+            
     return 0.0
 
 def valor_ir(total):
@@ -85,9 +125,10 @@ def valor_liquido(total, imposto):
 # 3. FUNÇÕES DE BANCO E INTERFACE
 # ==========================================
 
-def armazena_info(dados_finais):
-    """Aqui salvaremos no banco de dados futuramente"""
-    st.success(f"Nota {dados_finais['numero_nfe']} armazenada em memória com sucesso!")
+def armazena_info(lista_dados_finais):
+    """Agora recebe uma lista com os dados de todas as notas processadas"""
+    quantidade = len(lista_dados_finais)
+    st.success(f"✅ {quantidade} nota(s) armazenada(s) em memória com sucesso!")
 
 def balanco_nota_fiscal():
     st.header("📈 Balanço de Notas Fiscais (Dashboard)")
@@ -95,69 +136,84 @@ def balanco_nota_fiscal():
 
 def processa_nota():
     st.header("Upload e Leitura de Notas Fiscais")
-    arquivo_upload = st.file_uploader("Faça o upload da nota fiscal (pdf ou imagem)", type=["pdf", "png", "jpg", "jpeg"])
     
-    if arquivo_upload is not None:
-        tipo = arquivo_upload.name.lower().split(".")[-1]
-        bytes_arquivo = arquivo_upload.read()
+    # ADIÇÃO: accept_multiple_files=True permite selecionar N arquivos
+    arquivos_upload = st.file_uploader(
+        "Faça o upload das notas fiscais (pdf ou imagem)", 
+        type=["pdf", "png", "jpg", "jpeg"], 
+        accept_multiple_files=True
+    )
+    
+    # Verificamos se a lista de arquivos não está vazia
+    if arquivos_upload:
         
-        if st.button("Ler Nota Fiscal"):
-            with st.spinner("Processando imagem e lendo texto (OCR)..."):
-                imagens = convert_nota_fiscal(bytes_arquivo, tipo)
+        if st.button("Ler Notas Fiscais"):
+            # Lista vazia para guardar os resultados de todos os arquivos
+            lista_resultados = []
+            
+            # Barra de progresso para acompanhar a leitura
+            progresso = st.progress(0)
+            total = len(arquivos_upload)
+            
+            # LOOP: Passando por cada arquivo enviado
+            for i, arquivo in enumerate(arquivos_upload):
+                tipo = arquivo.name.lower().split(".")[-1]
+                bytes_arquivo = arquivo.read()
                 
-                if imagens:
-                    # Testando o leitor de QRCode apenas na primeira página para exemplo
-                    qrcode_lido = ler_qrcode_imagem(imagens[0])
-                    if qrcode_lido:
-                        st.toast(f"✅ QR Code detectado: {qrcode_lido[0]}")
+                with st.spinner(f"Processando {arquivo.name} ({i+1}/{total})..."):
+                    imagens = convert_nota_fiscal(bytes_arquivo, tipo)
                     
-                    texto_ocr = extrair_texto_unico(imagens)
-                    
-                    v_total = valor_total(texto_ocr)
-                    v_ir = valor_ir(v_total)
-                    v_liq = valor_liquido(v_total, v_ir)
-                    
-                    st.session_state['dados_extraidos'] = {
-                        "numero_nfe": numero_nfe(texto_ocr),
-                        "data_emissao": emissao_nota(texto_ocr),
-                        "vencimento": vencimento(texto_ocr),
-                        "cnpj_emitente": cnpj_emitente(texto_ocr),
-                        "cnpj_pagador": cnpj_pagador(texto_ocr),
-                        "valor_total": v_total,
-                        "valor_ir": v_ir,
-                        "valor_liquido": v_liq
-                    }
-                    st.success("Leitura concluída! Role para baixo para verificar.")
-                else:
-                    st.error("Falha ao converter o arquivo.")
+                    if imagens:
+                        qrcode_lido = ler_qrcode_imagem(imagens[0])
+                        if qrcode_lido:
+                            st.toast(f"✅ QR Code detectado em {arquivo.name}")
+                        
+                        texto_ocr = extrair_texto_unico(imagens)
+                        
+                        v_total = valor_total(texto_ocr)
+                        v_ir = valor_ir(v_total)
+                        v_liq = valor_liquido(v_total, v_ir)
+                        
+                        # Adicionando os dados desta nota à nossa lista geral
+                        lista_resultados.append({
+                            "Arquivo": arquivo.name,
+                            "numero_nfe": numero_nfe(texto_ocr),
+                            "data_emissao": emissao_nota(texto_ocr),
+                            "vencimento": vencimento(texto_ocr),
+                            "cnpj_emitente": cnpj_emitente(texto_ocr),
+                            "cnpj_pagador": cnpj_pagador(texto_ocr),
+                            "valor_total": v_total,
+                            "valor_ir": v_ir,
+                            "valor_liquido": v_liq
+                        })
+                    else:
+                        st.error(f"Falha ao converter o arquivo {arquivo.name}.")
+                
+                # Atualizando barra de progresso
+                progresso.progress((i + 1) / total)
+                
+            # Salvando a lista completa na memória temporária do Streamlit
+            st.session_state['dados_extraidos'] = lista_resultados
+            st.success("Leitura concluída! Verifique os dados abaixo.")
 
-    # Se a leitura já aconteceu, mostra o formulário para o usuário confirmar
+    # Se a leitura já aconteceu, mostramos a tabela em vez do form antigo
     if 'dados_extraidos' in st.session_state:
         st.divider()
         st.subheader("Verifique e Salve as Informações")
-        dados = st.session_state['dados_extraidos']
+        st.caption("Você pode clicar diretamente na tabela para editar qualquer valor lido incorretamente antes de salvar.")
         
-        with st.form("form_salvar_nota"):
-            col1, col2 = st.columns(2)
+        # Transforma a lista de dados em uma tabela editável
+        df = pd.DataFrame(st.session_state['dados_extraidos'])
+        tabela_editada = st.data_editor(df, use_container_width=True, hide_index=True)
+        
+        if st.button("Armazenar Todas as Informações"):
+            # Converte a tabela de volta para dicionário e envia para a sua função
+            dados_atualizados = tabela_editada.to_dict('records')
+            armazena_info(dados_atualizados)
             
-            nfe = col1.text_input("Nº NFE", dados['numero_nfe'])
-            emissao = col2.text_input("Emissão", dados['data_emissao'])
-            emitente = col1.text_input("CNPJ Emitente", dados['cnpj_emitente'])
-            pagador = col2.text_input("CNPJ Pagador", dados['cnpj_pagador'])
-            venc = col1.text_input("Vencimento", dados['vencimento'])
-            
-            val_tot = col2.number_input("Valor Total", value=float(dados['valor_total']))
-            val_ir = col1.number_input("Valor IR (4,8%)", value=float(dados['valor_ir']))
-            val_liq = col2.number_input("Valor Líquido", value=float(dados['valor_liquido']))
-            
-            if st.form_submit_button("Armazenar Informação"):
-                dados_atualizados = {
-                    "numero_nfe": nfe, "data_emissao": emissao, "vencimento": venc,
-                    "cnpj_emitente": emitente, "cnpj_pagador": pagador,
-                    "valor_total": val_tot, "valor_ir": val_ir, "valor_liquido": val_liq
-                }
-                armazena_info(dados_atualizados)
-                del st.session_state['dados_extraidos'] # Limpa a tela após salvar
+            # Limpa os dados da tela
+            del st.session_state['dados_extraidos']
+            st.rerun()
 
 # ==========================================
 # MAIN
