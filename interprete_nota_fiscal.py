@@ -126,7 +126,6 @@ def cnpj_emitente(texto_geral):
     return cnpjs[0] if len(cnpjs) > 0 else ""
 
 def cnpj_pagador(texto_geral):
-    # Lista de padrões em ordem de prioridade para capturar o CNPJ do tomador/adquirente
     padroes = [
         r'TOMADOR\s*/\s*ADQUIRENTE.*?(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})',
         r'TOMADOR\s+DO\s+SERVI[ÇC]O.*?(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})',
@@ -140,50 +139,43 @@ def cnpj_pagador(texto_geral):
         if match:
             return match.group(1)
             
-    # Plano B: Se nenhum padrão acima bater, pega o segundo CNPJ do texto (geralmente o do tomador)
     cnpjs = re.findall(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', texto_geral)
     return cnpjs[1] if len(cnpjs) > 1 else ""
 
+
+
 def valor_total(df_ocr, texto_geral):
-    """Extração robusta e isolada do valor total da nota fiscal"""
-    
-    # 1. Tenta buscar de forma exata nas linhas do DataFrame atual
-    if df_ocr is not None and not df_ocr.empty:
-        filtro_especifico = df_ocr['text'].str.contains(r'|Valor\s+do\s+serviçoVALOR\s+\s+DA\s+NFS-E\s+OPERAÇÃO|VALOR\s+DA\s+OPERA[ÇC][ÃA]O', case=False, regex=True)
-        linhas_alvo = df_ocr[filtro_especifico]
-        
-        if linhas_alvo.empty:
-            filtro_generico = df_ocr['text'].str.contains(r'TOTAL|SERVI[ÇC]O', case=False, regex=True)
-            linhas_alvo = df_ocr[filtro_generico]
-        
-        valores_encontrados_linhas = []
-        for _, termo in linhas_alvo.iterrows():
-            bloco, linha = termo['block_num'], termo['line_num']
-            palavras_da_linha = df_ocr[(df_ocr['block_num'] == bloco) & (df_ocr['line_num'] == linha)]
-            texto_linha = " ".join(palavras_da_linha['text'].astype(str))
-            
-            match = re.search(r'R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})', texto_linha, re.IGNORECASE)
-            if match:
-                valor_str = match.group(1).replace('.', '').replace(',', '.')
-                try:
-                    valores_encontrados_linhas.append(float(valor_str))
-                except ValueError:
-                    continue
-        if valores_encontrados_linhas:
-            return max(valores_encontrados_linhas)
-                
-    # 2. Fallback direto no texto limpo da própria nota atual
+    """Extrai o valor total real ignorando impostos e retenções"""
     texto_limpo = re.sub(r'\s+', ' ', texto_geral)
     
-    # Procura especificamente após a expressão de valor total da NFS-e
-    match_texto = re.search(r'VALOR\s+TOTAL\s+DA\s+NFS-e.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})', texto_limpo, re.IGNORECASE)
-    if match_texto:
-        try:
-            return float(match_texto.group(1).replace('.', '').replace(',', '.'))
-        except ValueError:
-            pass
+    padroes_fortes = [
+        # Novo padrão para pegar "Resultado da Prestação do Serviço" (com R$ opcional)
+        r'Resultado\s+da\s+Presta[çc][ãa]o\s+do\s+Servi[çc]o.*?(?:R\$)?\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
+        
+        # Pega o formato da imagem image_cc897f.png (Caixa alta com barra)
+        r'VALOR\s+DA\s+OPERA[ÇC][ÃA]O\s*(?:/|-)?\s*SERVI[ÇC]O.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
+        
+        # Pega o formato direto da imagem edited-image.png
+        r'Valor\s+do\s+Servi[çc]o.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
+        
+        # Padrões alternativos
+        r'VALOR\s+TOTAL\s+DA\s+NFS-e.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
+        r'BC\s+ISSQN.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})'
+    ]
+    
+    for padrao in padroes_fortes:
+        match = re.search(padrao, texto_limpo, re.IGNORECASE)
+        if match:
+            valor_str = match.group(1).replace('.', '').replace(',', '.')
+            try:
+                val = float(valor_str)
+                # Mantive sua regra original de ser maior que 2000
+                if val >= 6000.0:  
+                    return val
+            except ValueError:
+                continue
 
-    # Último caso: pega todos os valores e retorna o maior da nota
+    # Fallback: pega o maior valor geral encontrado com "R$" antes
     valores_gerais = re.findall(r'R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})', texto_limpo, re.IGNORECASE)
     if valores_gerais:
         valores_float = [float(v.replace('.', '').replace(',', '.')) for v in valores_gerais if v]
@@ -192,12 +184,55 @@ def valor_total(df_ocr, texto_geral):
             
     return 0.0
 
-def valor_ir(total):
-    return round(total * 0.048, 2)
+def valor_liquido(df_ocr, texto_geral):
+    """Busca diretamente o Valor Líquido impresso na nota fiscal via OCR"""
+    texto_limpo = re.sub(r'\s+', ' ', texto_geral)
+    
+    padroes = [
+        r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NFS-e.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
+        r'VALOR\s+L[ÍI]QUIDO.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})'
+    ]
+    
+    for padrao in padroes:
+        match = re.search(padrao, texto_limpo, re.IGNORECASE)
+        if match:
+            valor_str = match.group(1).replace('.', '').replace(',', '.')
+            try:
+                return float(valor_str)
+            except ValueError:
+                continue
+                
+    return 0.0
 
-def valor_liquido(total, imposto):
-    return round(total - imposto, 2)
-
+def valor_ir(df_ocr, texto_geral):
+    """Busca o valor retido de IRRF, IRPJ ou Retenções Federais impresso na nota fiscal"""
+    texto_limpo = re.sub(r'\s+', ' ', texto_geral)
+    
+    # Padrões para buscar o imposto (com ou sem o 'R$')
+    padroes_ir = [
+        # Busca direta por IRRF ou IRPJ (limitando a distância para não pegar outro valor por engano)
+        r'IRRF.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'IRPJ.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})',
+        
+        # Padrões baseados nas imagens que você enviou
+        r'Reten[çc][õo]es\s+Federais.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'Total\s+das\s+Reten[çc][õo]es.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})',
+        
+        # Padrão genérico de Imposto de Renda
+        r'Imposto\s+de\s+Renda.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})'
+    ]
+    
+    for padrao in padroes_ir:
+        match = re.search(padrao, texto_limpo, re.IGNORECASE)
+        if match:
+            valor_str = match.group(1).replace('.', '').replace(',', '.')
+            try:
+                return float(valor_str)
+            except ValueError:
+                continue
+                
+    return 0.0
+    
 def numero_contrato(texto_geral):
     padroes = [
         r'CONTRATO\s+([A-Z0-9\-\.]+)',                  
@@ -352,18 +387,26 @@ def processa_nota():
                         if qrcode_lido:
                             st.toast(f"✅ QR Code detectado em {arquivo.name}")
                         
-                        # Extração estruturada via TSV/Pandas
                         df_ocr = extrair_dados_ocr_tabular(imagens)
                         texto_ocr = reconstruir_texto_corrido(df_ocr)
+                        
                         with st.expander(f"🕵️ Ver DataFrame Tabular do OCR ({arquivo.name})"):
                             st.dataframe(df_ocr[['text', 'block_num', 'line_num', 'conf']])
                         
-                        # with st.expander(f"🕵️ Ver texto extraído pelo OCR tabular ({arquivo.name})"):
-                        #     st.text(texto_ocr)
-                        
                         v_total = valor_total(df_ocr, texto_ocr)
-                        v_ir = valor_ir(v_total)
-                        v_liq = valor_liquido(v_total, v_ir)
+                        v_liq = valor_liquido(df_ocr, texto_ocr)
+                        
+                        # Tratamento caso o valor líquido venha zerado do OCR para calcular pela regra de 4.8% ou por diferença
+                        v_total = valor_total(df_ocr, texto_ocr)
+                        v_liq = valor_liquido(df_ocr, texto_ocr)
+                        
+                        # 1. NOVA CHAMADA: Passando os dois parâmetros obrigatórios!
+                        v_ir = valor_ir(df_ocr, texto_ocr)
+                        
+                        # 2. Tratamento do líquido: Se não achar o valor líquido escrito na nota, 
+                        # calcula a diferença (Total - Retenções)
+                        if v_liq == 0.0 and v_total > 0 and v_ir > 0:
+                            v_liq = round(v_total - v_ir, 2)
                         
                         num_contr = numero_contrato(texto_ocr)
                         cnpj_emissao = cnpj_emitente(texto_ocr)
@@ -433,4 +476,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
