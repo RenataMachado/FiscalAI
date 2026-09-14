@@ -4,6 +4,7 @@ import numpy as np
 import pytesseract
 from pytesseract import Output
 import streamlit as st
+from streamlit_theme import st_theme
 import pandas as pd
 from pdf2image import convert_from_bytes
 from PIL import Image
@@ -250,9 +251,11 @@ def valor_ir(df_ocr, texto_geral):
     
     padroes_ir = [
         # 1. PADRÕES EXTREMAMENTE ESPECÍFICOS (Prioridade máxima para a Nota Prodesp)
-        # Foca no final da frase para driblar erros do OCR na palavra "Retenção"
+        # O "(?:\s+NA)?" torna a palavra "NA" opcional caso o OCR a ignore
+        r'RETENCAO(?:\s+NA)?\s+FONTE\s+IR\s*:\s*(?<!\d)(\d+(?:\.\d{3})*,\d{2})(?!\s*%)',
+        r'RETEN[ÇC][ÃA]O(?:\s+NA)?\s+FONTE\s+IRRF?\s*[:\-]?\s*(?<!\d)(\d+(?:\.\d{3})*,\d{2})(?!\s*%)',
         r'FONTE\s+IR\s*[:\-]?\s*(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
-        r'\bIR\s*\([R\$]+\).{0,50}?(\d+(?:\.\d{3})*,\d{2})', # Pega a tabela "IR (R)" no fim da nota
+        r'\bIR\s*\([R\$]+\).{0,50}?(\d+(?:\.\d{3})*,\d{2})', 
         
         # 2. PADRÕES LONGOS (Com a indicação de R$)
         r'IRRF.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
@@ -276,15 +279,13 @@ def valor_ir(df_ocr, texto_geral):
             valor_str = match.group(1).replace('.', '').replace(',', '.')
             try:
                 val = float(valor_str)
-                # A MÁGICA ACONTECE AQUI:
-                # Se o valor for 0.00, ele NÃO retorna, ele continua procurando outros padrões!
-                if val > 0: 
+                # Garante que ignora 0 e descarta alíquotas (ex: 4.80)
+                if val > 1.0: 
                     return val
             except ValueError:
                 continue
                 
     return 0.0
-    
 def numero_contrato(texto_geral):
     """Busca o número do contrato, aceitando casos onde a palavra está colada no valor"""
     texto_limpo = re.sub(r'\s+', ' ', texto_geral)
@@ -424,7 +425,7 @@ def balanco_nota_fiscal():
             df['vencimento'] = df['vencimento'].apply(formata_data)
             df['numero_contrato'] = df['numero_contrato'].apply(lambda x: x if x else "N/A")
             
-            # SUA TABELA ORIGINAL E INTACTA
+            # TABELA ORIGINAL 
             st.dataframe(df[['numero_nfe', 'data_emissao', 'cnpj_emitente', 'valor_total', 'valor_liquido']], use_container_width=True, hide_index=True)
             
             # BOTÃO DE EXCEL
@@ -542,41 +543,49 @@ def processa_nota():
             del st.session_state['dados_extraidos']
             st.rerun()
 
+
+
 # ==========================================
 # MAIN
 # ==========================================
 
 def main():
+  
     st.set_page_config(page_title="Leitor NFe Tabular", layout="wide")
     
-    # --- NOVO TRECHO ADICIONADO PARA O LOGO ---
-    # Cria duas colunas: proporção 4:1 (coluna maior para o título, menor para a imagem)
-    col1, col2 = st.columns([4, 1]) 
+    
+    theme = st_theme()
+    
+    if theme and theme.get("base") == "dark":
+        caminho_logo = "images/SP-4.png"   # Logo para fundo escuro
+    else:
+        caminho_logo = "images/SP-4-P.png" # Logo para fundo claro
+        
+    col1, col2 = st.columns([5, 1]) # Proporção ajustada para o título ter mais espaço
     
     with col1:
-        st.title("Sistema de Gestão de Notas Fiscais ")
+        st.title("Sistema de Gestão de Notas Fiscais")
         
     with col2:
-        # Exibe a imagem na coluna da direita
-        st.image("images/SP-4.png", width=200)
-    # ------------------------------------------
-    
-    # 1. Cria a "memória" de navegação (inicia na tela de Processar Nota)
+        st.write("")
+        st.write("")
+        st.image(caminho_logo, width=150) 
+        
+    # 4. Navegação do Sistema 
     if 'pagina_atual' not in st.session_state:
         st.session_state['pagina_atual'] = "Processar Nota"
         
     st.sidebar.subheader("Navegação")
     
-    # 2. Desenha os botões. O "use_container_width=True" deixa eles largos e bonitos
     if st.sidebar.button("📄 Processador Nota", use_container_width=True):
         st.session_state['pagina_atual'] = "Processar Nota"
         
     if st.sidebar.button("📊 Balanço (Painel de Controle)", use_container_width=True):
         st.session_state['pagina_atual'] = "Balanço (Painel de Controle)"
         
-    st.sidebar.divider() # Adiciona uma linha para separar do filtro
+    st.sidebar.divider() 
     
-    # 3. Chama a função correta baseada no botão que está salvo na memória
+    # 5. Executa a página escolhida
     if st.session_state['pagina_atual'] == "Processar Nota":
         processa_nota()
     else:
