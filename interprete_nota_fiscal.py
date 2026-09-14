@@ -249,16 +249,20 @@ def valor_ir(df_ocr, texto_geral):
     texto_limpo = re.sub(r'\s+', ' ', texto_geral)
     
     padroes_ir = [
-        # 1. PADRÕES LONGOS (Até 200 caracteres de distância)
-        # Ideais para Notas Tabulares (como a Nota 35) onde o OCR mistura várias colunas antes do R$
-        r'IRRF.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
-        r'IRPJ.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
-        r'Reten[çc][õo]es\s+Federais.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
-        r'Total\s+das\s+Reten[çc][õo]es.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
-        r'Imposto\s+de\s+Renda.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
+        # 1. PADRÕES EXTREMAMENTE ESPECÍFICOS (Prioridade máxima para a Nota Prodesp)
+        # Foca no final da frase para driblar erros do OCR na palavra "Retenção"
+        r'FONTE\s+IR\s*[:\-]?\s*(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'\bIR\s*\([R\$]+\).{0,50}?(\d+(?:\.\d{3})*,\d{2})', # Pega a tabela "IR (R)" no fim da nota
         
-        # 2. PADRÕES CURTOS (Caso a nota NÃO tenha o "R$" impresso)
-        # Mantemos uma distância curta (30) para evitar que ele pegue números soltos de outras linhas
+        # 2. PADRÕES LONGOS (Com a indicação de R$)
+        r'IRRF.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'IRPJ.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'Reten[çc][õo]es\s+Federais.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'Total\s+das\s+Reten[çc][õo]es.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'Imposto\s+de\s+Renda.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'RETEN[ÇC][ÃA]O.{0,30}?FONTE\s+IR.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        
+        # 3. PADRÕES CURTOS (Sem o R$, varredura final)
         r'IRRF.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
         r'IRPJ.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
         r'Reten[çc][õo]es\s+Federais.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
@@ -271,12 +275,15 @@ def valor_ir(df_ocr, texto_geral):
         if match:
             valor_str = match.group(1).replace('.', '').replace(',', '.')
             try:
-                return float(valor_str)
+                val = float(valor_str)
+                # A MÁGICA ACONTECE AQUI:
+                # Se o valor for 0.00, ele NÃO retorna, ele continua procurando outros padrões!
+                if val > 0: 
+                    return val
             except ValueError:
                 continue
                 
     return 0.0
-   
     
 def numero_contrato(texto_geral):
     """Busca o número do contrato, aceitando casos onde a palavra está colada no valor"""
@@ -380,7 +387,7 @@ def balanco_nota_fiscal():
     
     try:
         df = pd.read_sql_table('notas_fiscais', con=engine)
-       
+        
         if 'numero_contrato' not in df.columns:
             df['numero_contrato'] = "N/A"
             
@@ -416,13 +423,28 @@ def balanco_nota_fiscal():
             df['data_emissao'] = df['data_emissao'].apply(formata_data)
             df['vencimento'] = df['vencimento'].apply(formata_data)
             df['numero_contrato'] = df['numero_contrato'].apply(lambda x: x if x else "N/A")
+            
+            # SUA TABELA ORIGINAL E INTACTA
             st.dataframe(df[['numero_nfe', 'data_emissao', 'cnpj_emitente', 'valor_total', 'valor_liquido']], use_container_width=True, hide_index=True)
+            
+            # BOTÃO DE EXCEL
+            import io
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df[['numero_nfe', 'data_emissao', 'cnpj_emitente', 'valor_total', 'valor_liquido']].to_excel(writer, index=False, sheet_name='Notas Fiscais')
+            
+            st.download_button(
+                label="📊 Baixar Tabela em Excel (.xlsx)",
+                data=buffer.getvalue(),
+                file_name="balanco_notas_fiscais.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
     except Exception as e:
-        st.warning(f"Não foi possível ler o banco de dados. Verifique se o banco está rodando. Erro: {e}")
+        st.warning(f"Ocorreu um erro ao carregar os dados ou gerar o botão: {e}")
 
 def processa_nota():
-    st.header("Upload e Leitura de Notas Fiscais (TSV/Pandas)")
+    st.header("Upload e Leitura de Notas Fiscais")
     
     arquivos_upload = st.file_uploader(
         "Faça o upload das notas fiscais (pdf ou imagem)", 
@@ -526,11 +548,36 @@ def processa_nota():
 
 def main():
     st.set_page_config(page_title="Leitor NFe Tabular", layout="wide")
-    st.title("Sistema de Gestão de Notas Fiscais (Motor Tabular)")
     
-    menu = st.sidebar.radio("Navegação", ["Processar Nota", "Balanço (Dashboard)"])
+    # --- NOVO TRECHO ADICIONADO PARA O LOGO ---
+    # Cria duas colunas: proporção 4:1 (coluna maior para o título, menor para a imagem)
+    col1, col2 = st.columns([4, 1]) 
     
-    if menu == "Processar Nota":
+    with col1:
+        st.title("Sistema de Gestão de Notas Fiscais ")
+        
+    with col2:
+        # Exibe a imagem na coluna da direita
+        st.image("images/SP-4.png", width=200)
+    # ------------------------------------------
+    
+    # 1. Cria a "memória" de navegação (inicia na tela de Processar Nota)
+    if 'pagina_atual' not in st.session_state:
+        st.session_state['pagina_atual'] = "Processar Nota"
+        
+    st.sidebar.subheader("Navegação")
+    
+    # 2. Desenha os botões. O "use_container_width=True" deixa eles largos e bonitos
+    if st.sidebar.button("📄 Processador Nota", use_container_width=True):
+        st.session_state['pagina_atual'] = "Processar Nota"
+        
+    if st.sidebar.button("📊 Balanço (Painel de Controle)", use_container_width=True):
+        st.session_state['pagina_atual'] = "Balanço (Painel de Controle)"
+        
+    st.sidebar.divider() # Adiciona uma linha para separar do filtro
+    
+    # 3. Chama a função correta baseada no botão que está salvo na memória
+    if st.session_state['pagina_atual'] == "Processar Nota":
         processa_nota()
     else:
         balanco_nota_fiscal()
