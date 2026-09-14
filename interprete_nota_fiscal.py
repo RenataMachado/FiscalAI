@@ -13,9 +13,9 @@ import plotly.express as px
 import os
 from dotenv import load_dotenv
 
-# ============================================
+# ================================================
 # 1. CONFIGURAÇÃO URL DE CONEXÃO COM POSTGRES
-# ============================================
+# ================================================
 
 load_dotenv()
 DB_URL = os.getenv("DATABASE_URL")
@@ -26,9 +26,9 @@ if not DB_URL:
 engine = create_engine(DB_URL)
 
 
-# ==========================================
+# ================================================
 # 2. FUNÇÕES DE SUPORTE, CONVERSÃO E OCR TABULAR
-# ==========================================
+# ================================================
 
 def convert_nota_fiscal(arquivos_bytes, tipo):
     """Lida com PDF ou Imagens e retorna uma lista de imagens (PIL)"""
@@ -69,27 +69,38 @@ def reconstruir_texto_corrido(df_ocr):
     return " ".join(df_ocr['text'].astype(str))
 
 
-# ==========================================
+# ================================================
 # 3. FUNÇÕES DE EXTRAÇÃO BASEADAS EM TABELA/LINHAS
-# ==========================================
+# ================================================
 
 def numero_nfe(df_ocr, texto_geral):
-    # Procura primariamente via estrutura tabular nas linhas que contêm NFS-e
-    filtro = df_ocr['text'].str.contains(r'NFS-E|NOTA', case=False, regex=True)
-    for _, termo in df_ocr[filtro].iterrows():
-        bloco, linha = termo['block_num'], termo['line_num']
-        palavras_linha = df_ocr[(df_ocr['block_num'] == bloco) & (df_ocr['line_num'] == linha)]
-        texto_linha = " ".join(palavras_linha['text'].astype(str))
-        
-        match = re.search(r'N[uú]mero\s+da\s+NFS-e.*?(\d{1,15})\b', texto_linha, re.IGNORECASE)
-        if match:
-            return match.group(1)
-
-    # Fallback por regex no texto geral limpo
+    """Busca o número da Nota Fiscal varrendo o texto com tolerância a colunas e erros do OCR"""
     texto_limpo = re.sub(r'\s+', ' ', texto_geral)
+    
+    padroes = [
+        # 1. Padrões específicos das imagens (Número da Nota/Série) - Muito tolerantes a erros na barra '/'
+        r'N[uú]mero\s+da\s+Nota[\s/|]*S[eé]rie.{0,100}?(\d+(?:\.\d+)*)',
+        r'N[uú]mero\s+da\s+Nota.{0,100}?(\d+(?:\.\d+)+)', # Se ele não ler a palavra "Série", pega o número pontuado mesmo assim
+        
+        # 2. Padrões clássicos para pegar a NFS-e
+        r'N[uú]mero\s+da\s+NFS-e.{0,100}?(\d+(?:\.\d+)*)',
+        r'NFS-e\s*n?[ºo]?\s*.{0,50}?(\d+(?:\.\d+)*)'
+    ]
+    
+    for padrao in padroes:
+        match = re.search(padrao, texto_limpo, re.IGNORECASE)
+        if match:
+            # Captura o número (ex: 2.245.433) e remove os pontos para deixar só os dígitos (2245433)
+            numero_str = match.group(1).replace('.', '')
+            
+            # Se capturou algo válido e que tenha um tamanho aceitável para uma nota
+            if len(numero_str) >= 3:
+                return numero_str
+
+    # 3. FALLBACK: Se não achar os rótulos, procura a sigla NFS-e solta perto de um número
     match_prox = re.search(r'NFS-e.*?(\b\d{4,15}\b)', texto_limpo, re.IGNORECASE)
     if match_prox:
-        return match_prox.group(1)
+        return match_prox.group(1).replace('.', '')
         
     return ""
 
@@ -145,22 +156,25 @@ def cnpj_pagador(texto_geral):
 
 
 def valor_total(df_ocr, texto_geral):
-    """Extrai o valor total real ignorando impostos e retenções"""
+    """Extrai o valor total real ignorando impostos e retenções, com tolerância a colunas"""
     texto_limpo = re.sub(r'\s+', ' ', texto_geral)
     
     padroes_fortes = [
-        # Novo padrão para pegar "Resultado da Prestação do Serviço" (com R$ opcional)
-        r'Resultado\s+da\s+Presta[çc][ãa]o\s+do\s+Servi[çc]o.*?(?:R\$)?\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
+        # 1. PADRÕES LONGOS (Até 200 caracteres de distância)
+        # Ideais para Notas Tabulares, tolerando sujeira do OCR no meio do caminho
+        r'Valor\s+do\s+Servi[çc]o.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'BC\s+ISS[QN]{2}.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})', # Cobre ISSQN e eventuais erros como ISSNQ
+        r'VALOR\s+TOTAL\s+DA\s+NFS-e.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'Resultado\s+da\s+Presta[çc][ãa]o\s+do\s+Servi[çc]o.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'VALOR\s+DA\s+OPERA[ÇC][ÃA]O\s*(?:/|-)?\s*SERVI[ÇC]O.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
         
-        # Pega o formato da imagem image_cc897f.png (Caixa alta com barra)
-        r'VALOR\s+DA\s+OPERA[ÇC][ÃA]O\s*(?:/|-)?\s*SERVI[ÇC]O.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
-        
-        # Pega o formato direto da imagem edited-image.png
-        r'Valor\s+do\s+Servi[çc]o.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
-        
-        # Padrões alternativos
-        r'VALOR\s+TOTAL\s+DA\s+NFS-e.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
-        r'BC\s+ISSQN.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})'
+        # 2. PADRÕES CURTOS (Caso a nota NÃO tenha o "R$" impresso)
+        # Mantemos uma distância curta (30) para não pegar valores errados de outras linhas
+        r'Valor\s+do\s+Servi[çc]o.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'BC\s+ISS[QN]{2}.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'VALOR\s+TOTAL\s+DA\s+NFS-e.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'Resultado\s+da\s+Presta[çc][ãa]o\s+do\s+Servi[çc]o.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'VALOR\s+DA\s+OPERA[ÇC][ÃA]O\s*(?:/|-)?\s*SERVI[ÇC]O.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})'
     ]
     
     for padrao in padroes_fortes:
@@ -169,18 +183,31 @@ def valor_total(df_ocr, texto_geral):
             valor_str = match.group(1).replace('.', '').replace(',', '.')
             try:
                 val = float(valor_str)
-                # Mantive sua regra original de ser maior que 2000
-                if val >= 6000.0:  
+                # Removi a trava de "> 2000" para evitar que o sistema ignore notas legítimas de valor menor,
+                # mas mantive > 0 para não pegar valores zerados por acidente.
+                if val > 0:  
                     return val
             except ValueError:
                 continue
 
-    # Fallback: pega o maior valor geral encontrado com "R$" antes
-    valores_gerais = re.findall(r'R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})', texto_limpo, re.IGNORECASE)
-    if valores_gerais:
-        valores_float = [float(v.replace('.', '').replace(',', '.')) for v in valores_gerais if v]
+    # 3. FALLBACK 1: Pega o maior valor do texto que TENHA "R$" na frente
+    valores_com_rs = re.findall(r'(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})', texto_limpo, re.IGNORECASE)
+    if valores_com_rs:
+        valores_float = [float(v.replace('.', '').replace(',', '.')) for v in valores_com_rs if v]
         if valores_float:
-            return float(np.max(valores_float))
+            maior_valor_rs = float(np.max(valores_float))
+            # No fallback, coloquei uma trava mínima para ele não pegar o valor da alíquota como se fosse o total
+            if maior_valor_rs > 50.0: 
+                return maior_valor_rs
+
+    # 4. FALLBACK 2 (Modo Sobrevivência): Pega o maior formato de dinheiro solto
+    valores_sem_rs = re.findall(r'(?<!\d)(\d+(?:\.\d{3})*,\d{2})(?!\d)', texto_limpo)
+    if valores_sem_rs:
+        valores_float = [float(v.replace('.', '').replace(',', '.')) for v in valores_sem_rs if v]
+        if valores_float:
+            maior_valor_geral = float(np.max(valores_float))
+            if maior_valor_geral > 50.0: 
+                return maior_valor_geral
             
     return 0.0
 
@@ -189,16 +216,29 @@ def valor_liquido(df_ocr, texto_geral):
     texto_limpo = re.sub(r'\s+', ' ', texto_geral)
     
     padroes = [
-        r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NFS-e.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
-        r'VALOR\s+L[ÍI]QUIDO.*?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})'
+        # 1. PADRÕES LONGOS (Até 200 caracteres de distância, ideais para tabelas)
+        r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NFS-e\s*\+\s*IBS\s*/\s*CBS.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        
+        # Padrões normais
+        r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NFS-e.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'VALOR\s+L[ÍI]QUIDO.{0,200}?(?:R\$|RS)\s*(\d+(?:\.\d{3})*,\d{2})',
+        
+        # 2. PADRÕES CURTOS (Caso a nota NÃO tenha o "R$" impresso)
+        # Mantendo uma distância de apenas 30 caracteres para evitar pegar números de outras linhas
+        r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NFS-e\s*\+\s*IBS\s*/\s*CBS.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NFS-e.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'VALOR\s+L[ÍI]QUIDO.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})'
     ]
     
     for padrao in padroes:
         match = re.search(padrao, texto_limpo, re.IGNORECASE)
         if match:
+            # Pega o grupo capturado e ajusta pontuação para float
             valor_str = match.group(1).replace('.', '').replace(',', '.')
             try:
-                return float(valor_str)
+                val = float(valor_str)
+                if val > 0:
+                    return val
             except ValueError:
                 continue
                 
@@ -208,18 +248,22 @@ def valor_ir(df_ocr, texto_geral):
     """Busca o valor retido de IRRF, IRPJ ou Retenções Federais impresso na nota fiscal"""
     texto_limpo = re.sub(r'\s+', ' ', texto_geral)
     
-    # Padrões para buscar o imposto (com ou sem o 'R$')
     padroes_ir = [
-        # Busca direta por IRRF ou IRPJ (limitando a distância para não pegar outro valor por engano)
-        r'IRRF.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})',
-        r'IRPJ.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})',
+        # 1. PADRÕES LONGOS (Até 200 caracteres de distância)
+        # Ideais para Notas Tabulares (como a Nota 35) onde o OCR mistura várias colunas antes do R$
+        r'IRRF.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'IRPJ.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'Reten[çc][õo]es\s+Federais.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'Total\s+das\s+Reten[çc][õo]es.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
+        r'Imposto\s+de\s+Renda.{0,200}?(?:R\$)\s*(\d+(?:\.\d{3})*,\d{2})',
         
-        # Padrões baseados nas imagens que você enviou
-        r'Reten[çc][õo]es\s+Federais.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})',
-        r'Total\s+das\s+Reten[çc][õo]es.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})',
-        
-        # Padrão genérico de Imposto de Renda
-        r'Imposto\s+de\s+Renda.{0,30}?(?:R\$)?\s*(\d+(?:\.\d{3})*,\d{2})'
+        # 2. PADRÕES CURTOS (Caso a nota NÃO tenha o "R$" impresso)
+        # Mantemos uma distância curta (30) para evitar que ele pegue números soltos de outras linhas
+        r'IRRF.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'IRPJ.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'Reten[çc][õo]es\s+Federais.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'Total\s+das\s+Reten[çc][õo]es.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})',
+        r'Imposto\s+de\s+Renda.{0,30}?(?<!\d)(\d+(?:\.\d{3})*,\d{2})'
     ]
     
     for padrao in padroes_ir:
@@ -232,18 +276,35 @@ def valor_ir(df_ocr, texto_geral):
                 continue
                 
     return 0.0
+   
     
 def numero_contrato(texto_geral):
+    """Busca o número do contrato, aceitando casos onde a palavra está colada no valor"""
+    texto_limpo = re.sub(r'\s+', ' ', texto_geral)
+    
     padroes = [
-        r'CONTRATO\s+([A-Z0-9\-\.]+)',                  
-        r'Número do Contrato\s*[:]?\s*([A-Z0-9\-\.]+)', 
-        r'Contrato\s*[:]?\s*([A-Z0-9\-\.]+)',            
-        r'No\. do Contrato\s*[:]?\s*([A-Z0-9\-\.]+)'      
+        # 1. Padrão preparado para o texto colado (Ex: CONTRATOPD024453 ou CONTRATO 123)
+        # O (?:\s*[:\-]?\s*) permite que tenha espaço, dois pontos, traço, ou NADA antes do valor.
+        r'CONTRATO(?:\s*[:\-]?\s*)([A-Z]*\d+[A-Z0-9\-\.]*)',
+        
+        # 2. Demais padrões clássicos
+        r'N[uú]mero\s+do\s+Contrato\s*[:\-]?\s*([A-Z0-9\-\.]+)', 
+        r'Contrato\s*[:\-]?\s*([A-Z0-9\-\.]+)',            
+        r'No\.?\s*do\s*Contrato\s*[:\-]?\s*([A-Z0-9\-\.]+)'      
     ]
+    
     for padrao in padroes:
-        match = re.search(padrao, texto_geral, re.IGNORECASE)
+        match = re.search(padrao, texto_limpo, re.IGNORECASE)
         if match:
-            return match.group(1).strip()
+            captura = match.group(1).strip()
+            
+            # Validação de segurança: Um número de contrato DEVE ter pelo menos 1 número nele.
+            # Se a regex pegar só letras (ex: "SOCIAL" de "Contrato Social" ou "DE" de "Contrato de Prestação"), ele ignora e continua procurando.
+            if any(char.isdigit() for char in captura):
+                # Remove pontuações finais indesejadas caso ele grude com uma vírgula ou ponto final do texto
+                captura = captura.rstrip('.,-')
+                return captura
+                
     return ""
 
 
