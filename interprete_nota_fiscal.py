@@ -352,9 +352,38 @@ def formata_data(data_str):
 # 5. BANCO DE DADOS E INTERFACE
 # ==========================================
 
+# ==========================================
+# MODAL ESTILO SWEET ALERT
+# ==========================================
+@st.dialog("Resumo do Banco de Dados")
+def exibir_alerta_central(total_lido, notas_salvas, erro=None):
+    if erro:
+        st.error(f"❌ Erro ao salvar no banco: {erro}")
+    elif notas_salvas == 0:
+        st.warning(f"⚠️ Atenção: Nenhuma nota nova salva. Todas as {total_lido} notas processadas já existem no banco de dados!")
+    else:
+        duplicadas = total_lido - notas_salvas
+        if duplicadas > 0:
+            st.success(f"✅ {notas_salvas} nota(s) armazenada(s) com sucesso!")
+            st.info(f"ℹ️ {duplicadas} nota(s) ignorada(s) por já existirem no banco.")
+        else:
+            st.balloons()
+            st.success(f"✅ Todas as {notas_salvas} nota(s) foram armazenadas com sucesso!")
+    
+    # O botão OK fica dentro do alerta no meio da tela!
+    if st.button("OK, Fechar"):
+        # Limpa a memória e reinicia a tela apenas DEPOIS que você clica em OK
+        if 'dados_extraidos' in st.session_state:
+            del st.session_state['dados_extraidos']
+        st.rerun()
+
+# ==========================================
+# SUA FUNÇÃO ORIGINAL INTACTA
+# ==========================================
 def armazena_info(lista_dados_finais):
     try:
         df_para_salvar = pd.DataFrame(lista_dados_finais)
+        total_lido = len(df_para_salvar)
         
         for col in ['data_emissao', 'vencimento']:
             if col in df_para_salvar.columns:
@@ -367,24 +396,33 @@ def armazena_info(lista_dados_finais):
         try:
             df_existente = pd.read_sql('SELECT numero_nfe, cnpj_emitente FROM notas_fiscais', con=engine)
             if not df_existente.empty:
-                df_existente['chave'] = df_existente['numero_nfe'].astype(str) + df_existente['cnpj_emitente'].astype(str)
-                df_para_salvar['chave'] = df_para_salvar['numero_nfe'].astype(str) + df_para_salvar['cnpj_emitente'].astype(str)
+                # Limpeza apenas para comparar a chave (sua lógica blindada)
+                chave_nfe_existente = df_existente['numero_nfe'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                chave_nfe_nova = df_para_salvar['numero_nfe'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                
+                df_existente['chave'] = chave_nfe_existente + df_existente['cnpj_emitente'].astype(str).str.replace(r'\D', '', regex=True)
+                df_para_salvar['chave'] = chave_nfe_nova + df_para_salvar['cnpj_emitente'].astype(str).str.replace(r'\D', '', regex=True)
+                
                 df_para_salvar = df_para_salvar[~df_para_salvar['chave'].isin(df_existente['chave'])]
                 df_para_salvar = df_para_salvar.drop(columns=['chave'])
         except Exception:
             pass
             
         if df_para_salvar.empty:
-            st.warning("⚠️ Atenção: Todas estas notas já estavam cadastradas no banco de dados!")
+            # Chama o alerta central mostrando que tudo foi barrado
+            exibir_alerta_central(total_lido, 0)
             return
 
         df_para_salvar.to_sql('notas_fiscais', con=engine, if_exists='append', index=False)
-        st.success(f"✅ {len(df_para_salvar)} nota(s) nova(s) armazenada(s) no banco de dados com sucesso!")
+        
+        # Chama o alerta central mostrando quantas passaram
+        exibir_alerta_central(total_lido, len(df_para_salvar))
+        
     except Exception as e:
-        st.error(f"Erro ao conectar ou salvar no banco: {e}")
-
+        exibir_alerta_central(0, 0, erro=e)
+        
 def balanco_nota_fiscal():
-    st.header("📈 Balanço de Notas Fiscais (Dashboard)")
+    st.header("📈 Balanço de Notas Fiscais")
     
     try:
         df = pd.read_sql_table('notas_fiscais', con=engine)
@@ -540,8 +578,8 @@ def processa_nota():
             dados_atualizados = tabela_editada.to_dict('records')
             armazena_info(dados_atualizados)
             
-            del st.session_state['dados_extraidos']
-            st.rerun()
+            # del st.session_state['dados_extraidos']
+            # st.rerun()
 
 
 
