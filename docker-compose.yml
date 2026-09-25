@@ -1,0 +1,27 @@
+# Opcional: sobe um Postgres do zero, igual em qualquer máquina.
+# Útil quando a máquina nova nem tem Postgres instalado ainda.
+#
+# Uso:
+#   1) No .env, ajuste DATABASE_URL pra usar host "localhost" e as
+#      mesmas credenciais definidas aqui embaixo (POSTGRES_USER/PASSWORD/DB).
+#   2) docker compose up -d
+#   3) python scripts/setup_db.py   (cria o banco/tabelas se precisar e aplica as migrations)
+#
+# Se você já tem um Postgres rodando (local ou remoto), pode ignorar
+# este arquivo e só apontar o DATABASE_URL do .env pra ele.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: spaguas
+      POSTGRES_PASSWORD: troque_essa_senha
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - dados_postgres:/var/lib/postgresql/data
+
+volumes:
+  dados_postgres:
