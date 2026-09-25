@@ -54,7 +54,7 @@ requirements.txt
 
 Antes, as 4 tabelas (`notas_fiscais`, `resumo_contratos`, `termos_aditivos`,
 `notas_empenho`) eram criadas "na sorte" pelo `pandas.to_sql(...)`, na
-primeira vez que alguém salvava alguma coisa — sem tipos definidos, sem
+primeira vez que alguém salvava alguma coisa, sem tipos definidos, sem
 `id`, sem controle de versão do schema. Agora isso é controlado pelo
 **Alembic**, então sempre que o projeto for transferido para outra máquina
 basta rodar um comando para o banco ficar com a estrutura correta.
@@ -70,7 +70,7 @@ python scripts/setup_db.py    # cria o BANCO (se não existir) e as tabelas
 `scripts/setup_db.py` faz as duas coisas que faltavam pra isso ser
 "transferi o projeto e não tive problema nenhum":
 1. Roda `CREATE DATABASE` se o banco da `DATABASE_URL` ainda não existir
-   (o Alembic sozinho não faz isso — ele só cria/altera tabelas *dentro*
+   (o Alembic sozinho não faz isso, ele só cria/altera tabelas *dentro*
    de um banco que já existe).
 2. Chama `alembic upgrade head` pra criar as 4 tabelas.
 
@@ -122,7 +122,7 @@ docker-compose.yml                 # opcional: sobe um Postgres do zero se a má
 ```
 
 > **Importante:** o app continua salvando/lendo dados exatamente como antes
-> (`pandas.to_sql` / `pandas.read_sql`) — o Alembic só cuida da *estrutura*
+> (`pandas.to_sql` / `pandas.read_sql`), o Alembic só cuida da *estrutura*
 > das tabelas (criar, alterar colunas), não substitui a forma como os
 > dados são gravados no dia a dia.
 
@@ -130,7 +130,7 @@ docker-compose.yml                 # opcional: sobe um Postgres do zero se a má
 > nem Postgres para eu instalar `alembic`/`sqlalchemy` e validar de ponta a
 > ponta). A sintaxe e a estrutura seguem o padrão oficial do Alembic e os
 > nomes de tabela/coluna foram conferidos um a um contra o código original
-> — mas rode `alembic upgrade head` num banco de teste primeiro e me
+>, mas rode `alembic upgrade head` num banco de teste primeiro e me
 > avise se der algum erro.
 
 ## Observação sobre `client` (Gemini)

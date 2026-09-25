@@ -51,6 +51,8 @@ def gerenciar_contratos():
                         time.sleep(4) 
                         
                     except Exception as e:
+                        # --- EXIBE O ERRO DETALHADO DA IA NA TELA ---
+                        st.error(f"Erro detalhado da IA no arquivo {arquivo.name}: {str(e)}")
                         st.toast(f"⚠️ IA falhou para {arquivo.name}. Acionando Plano B (OCR)...")
                         usou_ia_com_sucesso = False
 
@@ -103,14 +105,32 @@ def gerenciar_contratos():
                 "arquivo_origem": st.column_config.TextColumn("Arquivo PDF")
             }
         )
+        
         if st.button("Confirmar e Salvar Contratos no Banco"):
             try:
                 df_para_banco = tabela_contratos_editada[['numero_contrato', 'numero_contrato_spaguas', 'processo_sei', 'valor_contrato', 'vigencia_contrato']].copy()
-                df_para_banco.to_sql('resumo_contratos', con=engine, if_exists='append', index=False)
-                st.success("✅ Contratos salvos com sucesso no banco de dados!")
-                st.balloons()
-                del st.session_state['contratos_extraidos']
+                    
+                # --- INÍCIO DA TRAVA ANTI-DUPLICATAS ---
+                try:
+                    df_existente = pd.read_sql('SELECT numero_contrato FROM resumo_contratos', con=engine)
+                    
+                    if not df_existente.empty:
+                        df_para_banco = df_para_banco[~df_para_banco['numero_contrato'].isin(df_existente['numero_contrato'])]
+                except Exception:
+                    pass 
+                # --- FIM DA TRAVA ---
+
+                if df_para_banco.empty:
+                    st.warning("⚠️ Nenhum contrato novo para salvar. O(s) contrato(s) já existem no banco de dados!")
+                else:
+                    df_para_banco.to_sql('resumo_contratos', con=engine, if_exists='append', index=False)
+                    st.success(f"✅ {len(df_para_banco)} Contrato(s) salvo(s) com sucesso!")
+                    st.balloons()
+                    
+                if 'contratos_extraidos' in st.session_state:
+                    del st.session_state['contratos_extraidos']
                 st.rerun()
+                    
             except Exception as e:
                 st.error(f"Erro ao salvar no banco: {e}")
 

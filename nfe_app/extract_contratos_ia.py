@@ -9,9 +9,24 @@ import numpy as np
 from markitdown import MarkItDown
 from google.genai import types
 
+# Importação do seu client. 
+# IMPORTANTE: Garanta que em nfe_app/config.py você tem algo como:
+# load_dotenv()
+# client = genai.Client(api_key=os.getenv("GEMINI_API_KEY")) se a chave existir.
 from nfe_app.config import client
 
+def limpar_json_ia(texto_resposta):
+    """Garante que resquícios de markdown (```json) não quebrem o json.loads"""
+    texto = texto_resposta.strip()
+    if texto.startswith("```"):
+        texto = re.sub(r'^```(?:json)?\s*', '', texto)
+        texto = re.sub(r'\s*```$', '', texto)
+    return texto.strip()
+
 def extrair_dados_via_ia_gemini(bytes_arquivo, nome_arquivo, tipo_doc="contrato"):
+    if client is None:
+        raise Exception("Cliente Gemini (IA) não inicializado. Verifique se a GEMINI_API_KEY foi carregada no config.py!")
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
         temp_file.write(bytes_arquivo)
         temp_caminho = temp_file.name
@@ -54,14 +69,21 @@ def extrair_dados_via_ia_gemini(bytes_arquivo, nome_arquivo, tipo_doc="contrato"
         )
         
         os.remove(temp_caminho)
-        return json.loads(resposta.text)
+        
+        # Limpeza preventiva e conversão para dicionário
+        texto_limpo = limpar_json_ia(resposta.text)
+        return json.loads(texto_limpo)
 
     except Exception as e:
         if os.path.exists(temp_caminho):
             os.remove(temp_caminho)
-        raise Exception(f"Falha na IA: {str(e)}")
+        raise Exception(f"Falha na IA ({tipo_doc}): {str(e)}")
+
 
 def extrair_dados_empenho_via_ia(bytes_arquivo, nome_arquivo):
+    if client is None:
+        raise Exception("Cliente Gemini (IA) não inicializado. Verifique se a GEMINI_API_KEY foi carregada no config.py!")
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
         temp_file.write(bytes_arquivo)
         temp_caminho = temp_file.name
@@ -90,15 +112,22 @@ def extrair_dados_empenho_via_ia(bytes_arquivo, nome_arquivo):
         resposta = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json", 
+                temperature=0.1
+            )
         )
         
         os.remove(temp_caminho)
-        return json.loads(resposta.text)
+        
+        texto_limpo = limpar_json_ia(resposta.text)
+        return json.loads(texto_limpo)
 
     except Exception as e:
-        if os.path.exists(temp_caminho): os.remove(temp_caminho)
+        if os.path.exists(temp_caminho): 
+            os.remove(temp_caminho)
         raise Exception(f"Falha na IA para NE: {str(e)}")
+
 
 def extrair_numero_contrato_spaguas(texto_geral, df_ocr=None):
     if not texto_geral and df_ocr is not None and not df_ocr.empty:
