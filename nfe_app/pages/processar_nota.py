@@ -47,7 +47,8 @@ def processa_nota():
                         texto_ocr = reconstruir_texto_corrido(df_ocr)
                         
                         with st.expander(f"🕵️ Ver DataFrame Tabular do OCR ({arquivo.name})"):
-                            st.dataframe(df_ocr[['text', 'block_num', 'line_num', 'conf']])
+                            colunas_debug = [c for c in ['text', 'block_num', 'line_num', 'conf'] if c in df_ocr.columns]
+                            st.dataframe(df_ocr[colunas_debug])
                         
                         v_total = valor_total(df_ocr, texto_ocr)
                         v_liq = valor_liquido(df_ocr, texto_ocr)
@@ -108,8 +109,9 @@ def processa_nota():
         st.write("---")
         st.write("Opções de Download Rápido (sem salvar no banco):")
         
-        excel_data_lev = gerar_excel_levantamento(st.session_state['dados_extraidos'])
-        excel_data_calc = gerar_excel_calculo_pagto(st.session_state['dados_extraidos'])
+        dados_editados = tabela_editada.to_dict('records')
+        excel_data_lev = gerar_excel_levantamento(dados_editados)
+        excel_data_calc = gerar_excel_calculo_pagto(dados_editados)
         
         col_btn_lev, col_btn_calc = st.columns(2)
         with col_btn_lev:

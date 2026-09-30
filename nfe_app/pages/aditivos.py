@@ -12,7 +12,7 @@ from nfe_app.extract_contratos_ia import (
     extrair_numero_contrato_spaguas, extrair_valor_contrato_pdf,
     extrair_vigencia_contrato_pdf, converter_vigencia_para_inteiro,
 )
-from nfe_app.formatters import formata_valor
+from nfe_app.formatters import formata_valor, converter_float, converter_int, texto_limpo_ia
 
 def gerenciar_aditivos():
     st.header("➕ Leitura e Upload de Termos Aditivos (PDF)")
@@ -30,14 +30,16 @@ def gerenciar_aditivos():
                 
                 with st.spinner(f"Processando aditivo {arquivo.name} ({i+1}/{total})..."):
                     usou_ia_com_sucesso = False
+                    num_cont = num_cont_spaguas = ""
+                    val_adic, meses_extra = 0.0, 0
                     
                     try:
                         dados_ia = extrair_dados_via_ia_gemini(bytes_arquivo, arquivo.name, tipo_doc="aditivo")
                         
-                        num_cont = str(dados_ia.get("numero_contrato", ""))
-                        num_cont_spaguas = str(dados_ia.get("numero_contrato_spaguas", ""))
-                        val_adic = float(dados_ia.get("valor_aditivo", 0.0))
-                        meses_extra = int(dados_ia.get("vigencia_aditivo", 0))
+                        num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
+                        num_cont_spaguas = texto_limpo_ia(dados_ia.get("numero_contrato_spaguas"))
+                        val_adic = converter_float(dados_ia.get("valor_aditivo"))
+                        meses_extra = converter_int(dados_ia.get("vigencia_aditivo"))
                         
                         if num_cont or num_cont_spaguas:
                             usou_ia_com_sucesso = True
@@ -46,6 +48,7 @@ def gerenciar_aditivos():
                         time.sleep(4) 
                         
                     except Exception as e:
+                        st.toast(f"⚠️ IA falhou para {arquivo.name} ({e}). Usando OCR...")
                         usou_ia_com_sucesso = False
 
                     if not usou_ia_com_sucesso:

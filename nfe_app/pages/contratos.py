@@ -12,7 +12,7 @@ from nfe_app.extract_contratos_ia import (
     extrair_numero_contrato_spaguas, extrair_valor_contrato_pdf,
     extrair_vigencia_contrato_pdf, converter_vigencia_para_inteiro,
 )
-from nfe_app.formatters import formata_valor
+from nfe_app.formatters import formata_valor, converter_float, converter_int, texto_limpo_ia
 
 def gerenciar_contratos():
     st.header("📑 Leitura e Upload de Contratos")
@@ -30,19 +30,17 @@ def gerenciar_contratos():
                 
                 with st.spinner(f"Processando contrato {arquivo.name} ({i+1}/{total})..."):
                     usou_ia_com_sucesso = False
+                    num_cont = num_cont_spaguas = num_sei = ""
+                    val_cont, tempo_vig_inteiro = 0.0, 0
                     
                     try:
                         dados_ia = extrair_dados_via_ia_gemini(bytes_arquivo, arquivo.name, tipo_doc="contrato")
                         
-                        num_cont = str(dados_ia.get("numero_contrato", ""))
-                        num_cont_spaguas = str(dados_ia.get("numero_contrato_spaguas", ""))
-                        
-                        num_sei = str(dados_ia.get("processo_sei") or "")
-                        if num_sei.upper() == "NONE":
-                            num_sei = ""
-                            
-                        val_cont = float(dados_ia.get("valor_contrato", 0.0))
-                        tempo_vig_inteiro = int(dados_ia.get("vigencia_meses", 0))
+                        num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
+                        num_cont_spaguas = texto_limpo_ia(dados_ia.get("numero_contrato_spaguas"))
+                        num_sei = texto_limpo_ia(dados_ia.get("processo_sei"))
+                        val_cont = converter_float(dados_ia.get("valor_contrato"))
+                        tempo_vig_inteiro = converter_int(dados_ia.get("vigencia_meses"))
                         
                         if (num_cont or num_cont_spaguas) and val_cont > 0:
                             usou_ia_com_sucesso = True
@@ -115,7 +113,7 @@ def gerenciar_contratos():
                     df_existente = pd.read_sql('SELECT numero_contrato FROM resumo_contratos', con=engine)
                     
                     if not df_existente.empty:
-                        df_para_banco = df_para_banco[~df_para_banco['numero_contrato'].isin(df_existente['numero_contrato'])]
+                        df_para_banco = df_para_banco[~df_para_banco['numero_contrato'].astype(str).str.strip().isin(df_existente['numero_contrato'].astype(str).str.strip())]
                 except Exception:
                     pass 
                 # --- FIM DA TRAVA ---

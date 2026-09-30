@@ -32,7 +32,19 @@ def acompanhamento_contratos():
         return
 
     try:
+        # Tipos consistentes (o banco pode devolver Decimal/None)
+        df_contratos['numero_contrato'] = df_contratos['numero_contrato'].fillna("").astype(str).str.strip()
+        df_notas['numero_contrato'] = df_notas['numero_contrato'].fillna("").astype(str).str.strip()
+        df_contratos['valor_contrato'] = pd.to_numeric(df_contratos['valor_contrato'], errors='coerce').fillna(0.0)
+        if 'vigencia_contrato' not in df_contratos.columns:
+            df_contratos['vigencia_contrato'] = 0
+        df_contratos['vigencia_contrato'] = pd.to_numeric(df_contratos['vigencia_contrato'], errors='coerce').fillna(0)
+        df_notas['valor_total'] = pd.to_numeric(df_notas['valor_total'], errors='coerce').fillna(0.0)
+
         if not df_aditivos.empty and 'numero_contrato' in df_aditivos.columns:
+            df_aditivos['numero_contrato'] = df_aditivos['numero_contrato'].fillna("").astype(str).str.strip()
+            df_aditivos['valor_aditivo'] = pd.to_numeric(df_aditivos['valor_aditivo'], errors='coerce').fillna(0.0)
+            df_aditivos['vigencia_aditivo'] = pd.to_numeric(df_aditivos['vigencia_aditivo'], errors='coerce').fillna(0)
             df_soma_adic = df_aditivos.groupby('numero_contrato').agg(
                 soma_valor_aditivo=('valor_aditivo', 'sum'),
                 soma_meses_aditivo=('vigencia_aditivo', 'sum')
@@ -64,7 +76,10 @@ def acompanhamento_contratos():
             df_cruzado['Rotulo_Busca'] = df_cruzado['numero_contrato'].astype(str) + " (" + df_cruzado['Arquivo'].astype(str) + ")"
         
         df_cruzado['saldo_restante'] = df_cruzado['valor_contrato'] - df_cruzado['valor_consumido']
-        df_cruzado['% consumido'] = (df_cruzado['valor_consumido'] / df_cruzado['valor_contrato']) * 100
+        # Evita divisão por zero quando o contrato está sem valor cadastrado
+        df_cruzado['% consumido'] = (
+            df_cruzado['valor_consumido'] / df_cruzado['valor_contrato'].replace(0, float('nan'))
+        ).fillna(0) * 100
         
         st.subheader("Painel de Alertas")
         contratos_alerta = df_cruzado[df_cruzado['% consumido'] >= 80]

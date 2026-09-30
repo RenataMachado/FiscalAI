@@ -31,6 +31,15 @@ def balanco_nota_fiscal():
         if 'numero_contrato' not in df_notas.columns:
             df_notas['numero_contrato'] = "N/A"
 
+        # As chaves de junção precisam ter o MESMO tipo (texto) nas duas tabelas,
+        # senão o pandas dá erro "merge on float64 and object columns".
+        df_notas['numero_contrato'] = df_notas['numero_contrato'].fillna("").astype(str).str.strip()
+        if 'numero_contrato' in df_contratos.columns:
+            df_contratos['numero_contrato'] = df_contratos['numero_contrato'].fillna("").astype(str).str.strip()
+        if 'processo_sei' in df_nes.columns:
+            df_nes['processo_sei'] = df_nes['processo_sei'].fillna("").astype(str).str.strip()
+            df_nes = df_nes[df_nes['processo_sei'] != ""]
+
         if not df_contratos.empty and 'numero_contrato' in df_contratos.columns:
             cols_merge = ['numero_contrato']
             if 'numero_contrato_spaguas' in df_contratos.columns:
@@ -43,13 +52,17 @@ def balanco_nota_fiscal():
         else:
             df = df_notas.copy()
 
+        if 'processo_sei' not in df.columns:
+            df['processo_sei'] = ""
+        df['processo_sei'] = df['processo_sei'].fillna("").astype(str).str.strip()
+
         if not df_nes.empty and 'processo_sei' in df_nes.columns:
-            cols_nes = ['processo_sei', 'numero_ne', 'natureza_despesa', 'fonte_recurso']
-            if 'ug' in df_nes.columns: cols_nes.append('ug')
-            if 'assunto' in df_nes.columns: cols_nes.append('assunto')
+            cols_nes = [c for c in ['processo_sei', 'numero_ne', 'natureza_despesa', 'fonte_recurso', 'ug', 'assunto'] if c in df_nes.columns]
                 
             df_nes_unicas = df_nes[cols_nes].drop_duplicates(subset=['processo_sei'])
-            df = pd.merge(df, df_nes_unicas, on='processo_sei', how='left', suffixes=('', '_ne'))
+            # Evita colunas duplicadas (ex.: 'ug' já existente) antes de juntar
+            df = df.drop(columns=[c for c in cols_nes if c != 'processo_sei' and c in df.columns])
+            df = pd.merge(df, df_nes_unicas, on='processo_sei', how='left')
         else:
             df['numero_ne'] = "-"
             df['natureza_despesa'] = "-"
@@ -66,11 +79,17 @@ def balanco_nota_fiscal():
         if 'assunto' not in df.columns: df['assunto'] = ""
 
         st.sidebar.subheader("Filtros")
-        emissor_filtro = st.sidebar.multiselect("Filtrar por CNPJ do Emitente", options=df['cnpj_emitente'].unique())
-        empresa_filtro = st.sidebar.multiselect("Filtrar por Nome da Empresa", options=df['Arquivo'].unique())
+        emissor_filtro = st.sidebar.multiselect("Filtrar por CNPJ do Emitente", options=df['cnpj_emitente'].dropna().unique())
+        empresa_filtro = st.sidebar.multiselect("Filtrar por Nome da Empresa", options=df['Arquivo'].dropna().unique())
         
         if emissor_filtro: df = df[df['cnpj_emitente'].isin(emissor_filtro)]
         if empresa_filtro: df = df[df['Arquivo'].isin(empresa_filtro)]
+
+        # Garante que as colunas de valor sejam numéricas (o banco pode devolver Decimal/None)
+        for col_valor in ['valor_total', 'valor_iss', 'valor_ir', 'valor_liquido']:
+            if col_valor not in df.columns:
+                df[col_valor] = 0.0
+            df[col_valor] = pd.to_numeric(df[col_valor], errors='coerce').fillna(0.0)
         
         col1, col2, col3 = st.columns(3)
         col1.metric("Valor Total Bruto", formata_valor(df['valor_total'].sum()))
@@ -104,7 +123,7 @@ def balanco_nota_fiscal():
         df['cnpj_emitente'] = df['cnpj_emitente'].apply(formata_cnpj)
         df['data_emissao'] = df['data_emissao'].apply(formata_data)
         df['vencimento'] = df['vencimento'].apply(formata_data)
-        df['numero_contrato'] = df['numero_contrato'].apply(lambda x: x if x else "N/A")
+        df['numero_contrato'] = df['numero_contrato'].apply(lambda x: x if pd.notna(x) and x != "" else "N/A")
         df['numero_contrato_spaguas'] = df['numero_contrato_spaguas'].apply(lambda x: x if pd.notna(x) and x != "" else "-")
         df['processo_sei'] = df['processo_sei'].apply(lambda x: x if pd.notna(x) and x != "" else "-")
         df['numero_ne'] = df['numero_ne'].apply(lambda x: x if pd.notna(x) and x != "" else "-")

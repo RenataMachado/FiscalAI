@@ -34,10 +34,18 @@ def extrair_dados_ocr_tabular(lista_imagens):
         df_pagina = pytesseract.image_to_data(img, lang="por", output_type=Output.DATAFRAME)
         df_completo = pd.concat([df_completo, df_pagina], ignore_index=True)
     
+    if df_completo.empty or 'text' not in df_completo.columns:
+        return pd.DataFrame(columns=['text', 'block_num', 'line_num', 'conf'])
+
     df_completo = df_completo.dropna(subset=['text'])
+    # O Tesseract às vezes devolve números como int/float; convertemos tudo para texto
+    df_completo['text'] = df_completo['text'].astype(str)
     df_completo = df_completo[df_completo['text'].str.strip() != '']
-    df_completo = df_completo[df_completo['conf'] > 30] 
-    return df_completo
+    df_completo['conf'] = pd.to_numeric(df_completo['conf'], errors='coerce').fillna(0)
+    df_completo = df_completo[df_completo['conf'] > 30]
+    return df_completo.reset_index(drop=True)
 
 def reconstruir_texto_corrido(df_ocr):
+    if df_ocr is None or df_ocr.empty:
+        return ""
     return " ".join(df_ocr['text'].astype(str))

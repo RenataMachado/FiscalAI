@@ -2,6 +2,15 @@
 Geração de planilhas Excel: levantamento de notas e cálculo de pagamento com desconto.
 """
 import io
+from nfe_app.formatters import converter_float as _num
+
+
+def _txt(valor):
+    """Texto seguro para célula (None/NaN viram vazio)."""
+    if valor is None:
+        return ""
+    texto = str(valor)
+    return "" if texto.lower() in ("nan", "none", "nat") else texto
 
 def gerar_excel_levantamento(lista_dados):
     from openpyxl import Workbook
@@ -45,10 +54,10 @@ def gerar_excel_levantamento(lista_dados):
     tot_bruto = tot_iss = tot_irf = tot_liq = 0.0
 
     for row_idx, item in enumerate(lista_dados, start=2):
-        bruto = float(item.get("valor_total") or 0.0)
-        iss = float(item.get("valor_iss") or 0.0)
-        ir = float(item.get("valor_ir") or 0.0)
-        liq = float(item.get("valor_liquido") or 0.0)
+        bruto = _num(item.get("valor_total"))
+        iss = _num(item.get("valor_iss"))
+        ir = _num(item.get("valor_ir"))
+        liq = _num(item.get("valor_liquido"))
 
         tot_bruto += bruto
         tot_iss += iss
@@ -56,14 +65,14 @@ def gerar_excel_levantamento(lista_dados):
         tot_liq += liq
 
         linha = [
-            str(item.get("Arquivo", "")),
-            str(item.get("numero_nfe", "")),
-            str(item.get("numero_contrato", "")),
-            str(item.get("numero_contrato_spaguas", "")),
-            str(item.get("processo_sei", "")),
-            str(item.get("data_emissao", "")),
-            str(item.get("vencimento", "")),
-            str(item.get("cnpj_emitente", "")),
+            _txt(item.get("Arquivo", "")),
+            _txt(item.get("numero_nfe", "")),
+            _txt(item.get("numero_contrato", "")),
+            _txt(item.get("numero_contrato_spaguas", "")),
+            _txt(item.get("processo_sei", "")),
+            _txt(item.get("data_emissao", "")),
+            _txt(item.get("vencimento", "")),
+            _txt(item.get("cnpj_emitente", "")),
             bruto, iss, ir, liq
         ]
         
@@ -126,7 +135,7 @@ def gerar_excel_calculo_pagto(lista_dados, processo_sei_filtro=None):
 
     # Filtro opcional por Processo SEI
     if processo_sei_filtro and processo_sei_filtro != "Todos":
-        lista_dados = [item for item in lista_dados if str(item.get("processo_sei", "")).strip() == str(processo_sei_filtro).strip()]
+        lista_dados = [item for item in lista_dados if _txt(item.get("processo_sei", "")).strip() == str(processo_sei_filtro).strip()]
 
     font_bold = Font(bold=True)
     font_red_bold = Font(color="FF0000", bold=True)
@@ -143,19 +152,19 @@ def gerar_excel_calculo_pagto(lista_dados, processo_sei_filtro=None):
         return output
 
     primeiro = lista_dados[0]
-    empresa = str(primeiro.get("Arquivo", ""))
+    empresa = _txt(primeiro.get("Arquivo", ""))
     
-    tc_num = str(primeiro.get("numero_contrato_spaguas", ""))
+    tc_num = _txt(primeiro.get("numero_contrato_spaguas", ""))
     if not tc_num or tc_num == "-" or tc_num == "":
-        tc_num = str(primeiro.get("numero_contrato", ""))
+        tc_num = _txt(primeiro.get("numero_contrato", ""))
         
-    cnpj = str(primeiro.get("cnpj_emitente", ""))
-    natureza = str(primeiro.get("natureza_despesa", ""))
-    ne = str(primeiro.get("numero_ne", ""))
-    fonte = str(primeiro.get("fonte_recurso", ""))
-    sei = str(primeiro.get("processo_sei", ""))
-    ug_lida = str(primeiro.get("ug", ""))
-    assunto_lido = str(primeiro.get("assunto", ""))
+    cnpj = _txt(primeiro.get("cnpj_emitente", ""))
+    natureza = _txt(primeiro.get("natureza_despesa", ""))
+    ne = _txt(primeiro.get("numero_ne", ""))
+    fonte = _txt(primeiro.get("fonte_recurso", ""))
+    sei = _txt(primeiro.get("processo_sei", ""))
+    ug_lida = _txt(primeiro.get("ug", ""))
+    assunto_lido = _txt(primeiro.get("assunto", ""))
 
     ws.merge_cells('A1:G1')
     ws['A1'] = "CALCULO PARA PAGTO DE FATURAS C/DESCONTO"
@@ -222,13 +231,13 @@ def gerar_excel_calculo_pagto(lista_dados, processo_sei_filtro=None):
     tot_bruto = tot_iss = tot_irf = tot_liq = 0.0
 
     for item in lista_dados:
-        nfe = str(item.get("numero_nfe", ""))
-        bruto = float(item.get("valor_total", 0.0))
+        nfe = _txt(item.get("numero_nfe", ""))
+        bruto = _num(item.get("valor_total"))
         inss = 0.0
-        iss = float(item.get("valor_iss", 0.0))
+        iss = _num(item.get("valor_iss"))
         caucao = 0.0
-        irf = float(item.get("valor_ir", 0.0))
-        liq = float(item.get("valor_liquido", 0.0))
+        irf = _num(item.get("valor_ir"))
+        liq = _num(item.get("valor_liquido"))
         
         tot_bruto += bruto
         tot_iss += iss

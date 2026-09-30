@@ -2,14 +2,6 @@
 """
 Modelos SQLAlchemy (ORM) que descrevem as tabelas do banco.
 
-Estas classes NAO mudam a forma como o app grava dados (ele continua
-usando pandas `to_sql` / `read_sql` normalmente, igual sempre foi).
-Elas servem só para o Alembic saber "como a tabela deveria ser" e
-gerar/aplicar as migrations de criação/alteração de tabelas.
-
-Os nomes de tabela e de coluna abaixo foram tirados exatamente do que
-o código original gravava com `to_sql(...)`, então os dados antigos
-continuam compatíveis.
 """
 from sqlalchemy import Column, Integer, String, Text, Numeric, DateTime, func
 from sqlalchemy.orm import declarative_base

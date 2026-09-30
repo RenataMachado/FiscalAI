@@ -67,3 +67,67 @@ def armazena_info(lista_dados_finais):
         
     except Exception as e:
         exibir_alerta_central(0, 0, erro=e)
+
+
+# ---------------------------------------------------------------------------
+# Consumo de tokens da IA (Claude / Anthropic)
+# ---------------------------------------------------------------------------
+CHAVE_CONSUMO = "consumo_tokens"
+
+
+def registrar_tokens(documento, tipo_documento, dados_ia):
+    """
+    Guarda o consumo de tokens de UMA leitura feita pela IA.
+    Chame logo depois da chamada da IA, mesmo que a leitura venha incompleta:
+    os tokens foram gastos do mesmo jeito.
+    """
+    uso = dados_ia.get("_tokens") if isinstance(dados_ia, dict) else None
+    if not uso:
+        return
+
+    st.session_state.setdefault(CHAVE_CONSUMO, []).append({
+        "documento": documento,
+        "tipo": tipo_documento,
+        "modelo": uso.get("modelo", ""),
+        "entrada": uso.get("entrada", 0),
+        "raciocinio": uso.get("raciocinio", 0),
+        "saida": uso.get("saida", 0),
+        "total": uso.get("total", 0),
+    })
+    st.toast(f"🔢 {documento}: {uso.get('total', 0):,} tokens".replace(",", "."))
+
+
+def mostrar_consumo_tokens():
+    """Mostra um quadro com o consumo de tokens de todas as leituras desta sessão."""
+    registros = st.session_state.get(CHAVE_CONSUMO, [])
+    if not registros:
+        return
+
+    df = pd.DataFrame(registros)
+    total_geral = int(df["total"].sum())
+
+    with st.expander(f"🔢 Consumo de tokens da IA nesta sessão: {total_geral:,} tokens em {len(df)} leitura(s)".replace(",", ".")):
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Entrada (documento + instruções)", f"{int(df['entrada'].sum()):,}".replace(",", "."))
+        col2.metric("Raciocínio da IA", f"{int(df['raciocinio'].sum()):,}".replace(",", "."))
+        col3.metric("Saída (resposta)", f"{int(df['saida'].sum()):,}".replace(",", "."))
+        col4.metric("Média por documento", f"{int(df['total'].mean()):,}".replace(",", "."))
+
+        st.dataframe(
+            df, use_container_width=True, hide_index=True,
+            column_config={
+                "documento": st.column_config.TextColumn("Documento"),
+                "tipo": st.column_config.TextColumn("Tipo"),
+                "modelo": st.column_config.TextColumn("Modelo"),
+                "entrada": st.column_config.NumberColumn("Entrada", format="%d"),
+                "raciocinio": st.column_config.NumberColumn("Raciocínio", format="%d"),
+                "saida": st.column_config.NumberColumn("Saída", format="%d"),
+                "total": st.column_config.NumberColumn("Total", format="%d"),
+            }
+        )
+        st.caption("Números informados pela própria Anthropic em cada resposta (campo usage). "
+                   "Na Claude, os tokens de raciocínio já vêm somados na Saída. "
+                   "Tentativas que falharam por servidor ocupado ou cota esgotada não aparecem aqui.")
+        if st.button("Zerar contador", key="zerar_consumo_tokens"):
+            del st.session_state[CHAVE_CONSUMO]
+            st.rerun()

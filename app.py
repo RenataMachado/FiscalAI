@@ -9,8 +9,9 @@ Este arquivo fica FORA do pacote nfe_app/ de propósito: assim os imports
 absolutos dentro do pacote (from nfe_app.xxx import yyy) funcionam sem
 problemas de "relative import" ao executar via `streamlit run`.
 """
+from pathlib import Path
+
 import streamlit as st
-from streamlit_theme import st_theme
 
 from nfe_app.pages.processar_nota import processa_nota
 from nfe_app.pages.balanco import balanco_nota_fiscal
@@ -19,57 +20,71 @@ from nfe_app.pages.aditivos import gerenciar_aditivos
 from nfe_app.pages.empenhos import gerenciar_empenhos
 from nfe_app.pages.vigencia import acompanhamento_contratos
 
+# Pasta onde está este arquivo. Assim as imagens são encontradas
+# mesmo que você rode o comando a partir de outra pasta.
+PASTA_BASE = Path(__file__).resolve().parent
+LOGO_ESCURO = PASTA_BASE / "images" / "SP-4.png"    # usado no tema escuro
+LOGO_CLARO = PASTA_BASE / "images" / "SP-4-P.png"   # usado no tema claro
+
+# Cada página: (texto do botão, nome interno, função que desenha a tela)
+PAGINAS = [
+    ("📄 Processador Nota", "Processar Nota", processa_nota),
+    ("📊 Balanço", "Balanço (Painel de Controle)", balanco_nota_fiscal),
+    ("📑 Resumos Contratuais", "Resumos Contratuais", gerenciar_contratos),
+    ("➕ Termos Aditivos", "Termos Aditivos", gerenciar_aditivos),
+    ("🧾 Notas de Empenho", "Notas de Empenho", gerenciar_empenhos),
+    ("⏱️ Acompanhamento de Vigência", "Acompanhamento Vigência", acompanhamento_contratos),
+]
+
+
+def detectar_tema_escuro():
+    """
+    Descobre se o Streamlit está no tema escuro.
+    Se o pacote streamlit-theme não estiver instalado ou der erro,
+    o app continua funcionando (usa o logo do tema escuro por padrão).
+    """
+    try:
+        from streamlit_theme import st_theme
+        tema = st_theme()
+        if tema:
+            return tema.get("base") == "dark"
+    except Exception:
+        pass
+    try:
+        return st.get_option("theme.base") != "light"
+    except Exception:
+        return True
+
 
 def main():
     st.set_page_config(page_title="Leitor NFe Tabular", layout="wide")
-    theme = st_theme()
-    if theme and theme.get("base") == "dark":
-        caminho_logo = "images/SP-4.png"   
-    else:
-        caminho_logo = "images/SP-4-P.png" 
-        
-    col1, col2 = st.columns([5, 1]) 
+
+    caminho_logo = LOGO_ESCURO if detectar_tema_escuro() else LOGO_CLARO
+
+    col1, col2 = st.columns([5, 1])
     with col1:
         st.title("Sistema de Gestão de Notas Fiscais")
     with col2:
         st.write("")
         st.write("")
-        try:
-            st.image(caminho_logo, width=150) 
-        except:
-            pass 
-        
+        if caminho_logo.exists():
+            st.image(str(caminho_logo), width=150)
+
     if 'pagina_atual' not in st.session_state:
-        st.session_state['pagina_atual'] = "Processar Nota"
-        
+        st.session_state['pagina_atual'] = PAGINAS[0][1]
+
     st.sidebar.subheader("Navegação")
-    if st.sidebar.button("📄 Processador Nota", use_container_width=True):
-        st.session_state['pagina_atual'] = "Processar Nota"
-    if st.sidebar.button("📊 Balanço ", use_container_width=True):
-        st.session_state['pagina_atual'] = "Balanço (Painel de Controle)"
-    if st.sidebar.button("📑 Resumos Contratuais", use_container_width=True):
-        st.session_state['pagina_atual'] = "Resumos Contratuais"
-    if st.sidebar.button("➕ Termos Aditivos", use_container_width=True):
-        st.session_state['pagina_atual'] = "Termos Aditivos"
-    if st.sidebar.button("🧾 Notas de Empenho", use_container_width=True):
-        st.session_state['pagina_atual'] = "Notas de Empenho"
-    if st.sidebar.button("⏱️ Acompanhamento de Vigência", use_container_width=True):
-        st.session_state['pagina_atual'] = "Acompanhamento Vigência"
-        
-    st.sidebar.divider() 
-    
-    if st.session_state['pagina_atual'] == "Processar Nota":
-        processa_nota()
-    elif st.session_state['pagina_atual'] == "Balanço (Painel de Controle)":
-        balanco_nota_fiscal()
-    elif st.session_state['pagina_atual'] == "Resumos Contratuais":
-        gerenciar_contratos() 
-    elif st.session_state['pagina_atual'] == "Termos Aditivos":
-        gerenciar_aditivos()
-    elif st.session_state['pagina_atual'] == "Notas de Empenho":
-        gerenciar_empenhos()
-    elif st.session_state['pagina_atual'] == "Acompanhamento Vigência":
-        acompanhamento_contratos() 
+    for rotulo, nome, _ in PAGINAS:
+        if st.sidebar.button(rotulo, use_container_width=True, key=f"nav_{nome}"):
+            st.session_state['pagina_atual'] = nome
+
+    st.sidebar.divider()
+
+    for _, nome, funcao_pagina in PAGINAS:
+        if st.session_state['pagina_atual'] == nome:
+            funcao_pagina()
+            break
+
 
 if __name__ == "__main__":
     main()

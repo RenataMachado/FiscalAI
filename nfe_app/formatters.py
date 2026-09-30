@@ -134,3 +134,59 @@ def formata_data(data_str):
         return f"{dia}/{mes}/{ano}"
         
     return data_str
+
+
+def converter_float(valor, padrao=0.0):
+    """
+    Converte com segurança qualquer valor (None, "", "1.234,56", 1234.5, NaN...) para float.
+    Evita erros como float(None) ou float("") quando a IA devolve um campo vazio.
+    """
+    if valor is None:
+        return padrao
+    if isinstance(valor, (int, float)):
+        try:
+            if valor != valor:  # NaN
+                return padrao
+        except Exception:
+            pass
+        return float(valor)
+    texto = str(valor).strip()
+    if not texto or texto.upper() in ("NONE", "NULL", "NAN", "-"):
+        return padrao
+    limpo = re.sub(r'[^0-9.,-]', '', texto)
+    if not limpo:
+        return padrao
+    if ',' in limpo and '.' in limpo:
+        if limpo.rfind(',') > limpo.rfind('.'):
+            limpo = limpo.replace('.', '').replace(',', '.')
+        else:
+            limpo = limpo.replace(',', '')
+    elif ',' in limpo:
+        limpo = limpo.replace(',', '.')
+    try:
+        return float(limpo)
+    except ValueError:
+        return padrao
+
+
+def converter_int(valor, padrao=0):
+    """Converte com segurança para inteiro (ex.: '12 meses' -> 12, None -> 0)."""
+    if valor is None:
+        return padrao
+    if isinstance(valor, (int, float)):
+        try:
+            if valor != valor:  # NaN
+                return padrao
+        except Exception:
+            pass
+        return int(valor)
+    match = re.search(r'\d+', str(valor))
+    return int(match.group(0)) if match else padrao
+
+
+def texto_limpo_ia(valor):
+    """Converte o retorno da IA em texto, trocando None/'None'/'null' por string vazia."""
+    if valor is None:
+        return ""
+    texto = str(valor).strip()
+    return "" if texto.upper() in ("NONE", "NULL", "NAN") else texto

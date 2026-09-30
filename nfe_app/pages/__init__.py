@@ -1,1 +1,1 @@
-"""Paginas (telas) do Streamlit."""
+"""Paginas (telas) da aplicacao Streamlit."""

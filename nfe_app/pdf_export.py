@@ -6,6 +6,19 @@ from reportlab.lib.pagesizes import letter, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from nfe_app.formatters import converter_float
+
+
+def _moeda(valor):
+    v = converter_float(valor)
+    return f"R$ {v:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
+
+def _txt(valor):
+    if valor is None:
+        return ""
+    texto = str(valor)
+    return "" if texto.lower() in ("nan", "none", "nat") else texto
 
 def gerar_pdf_balanco(lista_dados):
     buffer = io.BytesIO()
@@ -49,20 +62,20 @@ def gerar_pdf_balanco(lista_dados):
     dados_tabela = [cabecalho]
     
     for item in lista_dados:
-        v_bruto = f"R$ {item.get('valor_total', 0):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.') if isinstance(item.get('valor_total'), (int, float)) else str(item.get('valor_total', ''))
-        v_iss = f"R$ {item.get('valor_iss', 0):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.') if isinstance(item.get('valor_iss'), (int, float)) else str(item.get('valor_iss', ''))
-        v_ir = f"R$ {item.get('valor_ir', 0):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.') if isinstance(item.get('valor_ir'), (int, float)) else str(item.get('valor_ir', ''))
-        v_liq = f"R$ {item.get('valor_liquido', 0):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.') if isinstance(item.get('valor_liquido'), (int, float)) else str(item.get('valor_liquido', ''))
+        v_bruto = _moeda(item.get('valor_total'))
+        v_iss = _moeda(item.get('valor_iss'))
+        v_ir = _moeda(item.get('valor_ir'))
+        v_liq = _moeda(item.get('valor_liquido'))
 
         linha = [
-            Paragraph(str(item.get("Arquivo", "")), estilo_celula_esquerda),
-            Paragraph(str(item.get("numero_nfe", "")), estilo_celula),
-            Paragraph(str(item.get("numero_contrato", "")), estilo_celula),
-            Paragraph(str(item.get("numero_contrato_spaguas", "")), estilo_celula), 
-            Paragraph(str(item.get("processo_sei", "")), estilo_celula), 
-            Paragraph(str(item.get("data_emissao", "")), estilo_celula),
-            Paragraph(str(item.get("vencimento", "")), estilo_celula),
-            Paragraph(str(item.get("cnpj_emitente", "")), estilo_celula),
+            Paragraph(_txt(item.get("Arquivo", "")), estilo_celula_esquerda),
+            Paragraph(_txt(item.get("numero_nfe", "")), estilo_celula),
+            Paragraph(_txt(item.get("numero_contrato", "")), estilo_celula),
+            Paragraph(_txt(item.get("numero_contrato_spaguas", "")), estilo_celula), 
+            Paragraph(_txt(item.get("processo_sei", "")), estilo_celula), 
+            Paragraph(_txt(item.get("data_emissao", "")), estilo_celula),
+            Paragraph(_txt(item.get("vencimento", "")), estilo_celula),
+            Paragraph(_txt(item.get("cnpj_emitente", "")), estilo_celula),
             Paragraph(v_bruto, estilo_celula_direita),
             Paragraph(v_iss, estilo_celula_direita),
             Paragraph(v_ir, estilo_celula_direita),

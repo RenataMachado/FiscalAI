@@ -14,7 +14,7 @@ from nfe_app.extract_empenho import (
     extrai_processo_sei_empenho, extrai_cnpj_empenho, extrai_numero_contrato_empenho,
     extrai_natureza_empenho, extrai_valor_empenho, extrai_assunto_empenho, extrai_ug_empenho,
 )
-from nfe_app.formatters import formata_valor
+from nfe_app.formatters import formata_valor, converter_float, texto_limpo_ia
 
 def gerenciar_empenhos():
     st.header("🧾 Leitura e Upload de Notas de Empenho (NE)")
@@ -39,20 +39,22 @@ def gerenciar_empenhos():
                 
                 with st.spinner(f"Processando NE {arquivo.name} ({i+1}/{total})..."):
                     usou_ia_com_sucesso = False
+                    num_ne = proc_sei = cnpj = num_cont = nat_desp = fonte = ug = assunto = ""
+                    valor = 0.0
                     
                     if not forcar_ocr:
                         try:
                             dados_ia = extrair_dados_empenho_via_ia(bytes_arquivo, arquivo.name)
                             
-                            num_ne = str(dados_ia.get("numero_empenho", ""))
-                            proc_sei = str(dados_ia.get("processo_sei", ""))
-                            cnpj = str(dados_ia.get("cnpj_credor", ""))
-                            num_cont = str(dados_ia.get("numero_contrato", ""))
-                            nat_desp = str(dados_ia.get("natureza_despesa", ""))
-                            fonte = str(dados_ia.get("fonte_recurso", ""))
-                            valor = float(dados_ia.get("valor_empenhado", 0.0))
-                            ug = str(dados_ia.get("ug", ""))
-                            assunto = str(dados_ia.get("assunto", ""))
+                            num_ne = texto_limpo_ia(dados_ia.get("numero_empenho"))
+                            proc_sei = texto_limpo_ia(dados_ia.get("processo_sei"))
+                            cnpj = texto_limpo_ia(dados_ia.get("cnpj_credor"))
+                            num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
+                            nat_desp = texto_limpo_ia(dados_ia.get("natureza_despesa"))
+                            fonte = texto_limpo_ia(dados_ia.get("fonte_recurso"))
+                            valor = converter_float(dados_ia.get("valor_empenhado"))
+                            ug = texto_limpo_ia(dados_ia.get("ug"))
+                            assunto = texto_limpo_ia(dados_ia.get("assunto"))
                             
                             if num_ne and valor > 0:
                                 usou_ia_com_sucesso = True
@@ -60,6 +62,7 @@ def gerenciar_empenhos():
                             time.sleep(4)
                             
                         except Exception as e:
+                            st.toast(f"⚠️ IA falhou para {arquivo.name} ({e}). Usando OCR...")
                             usou_ia_com_sucesso = False
                     else:
                         st.toast("Modo Debug Ativado: IA ignorada. Rodando OCR puro...")
@@ -114,7 +117,9 @@ def gerenciar_empenhos():
         
         try:
             df_contratos_sei = pd.read_sql('SELECT numero_contrato AS num_cont_db, processo_sei FROM resumo_contratos WHERE processo_sei IS NOT NULL', con=engine)
-            df_contratos_sei = df_contratos_sei[df_contratos_sei['processo_sei'].str.strip() != '']
+            df_contratos_sei['processo_sei'] = df_contratos_sei['processo_sei'].astype(str).str.strip()
+            df_contratos_sei = df_contratos_sei[df_contratos_sei['processo_sei'] != '']
+            df_edit_ne['processo_sei'] = df_edit_ne['processo_sei'].fillna('').astype(str).str.strip()
             df_contratos_sei = df_contratos_sei.drop_duplicates(subset=['processo_sei'])
             
             df_edit_ne = pd.merge(df_edit_ne, df_contratos_sei, on='processo_sei', how='left')
@@ -152,7 +157,7 @@ def gerenciar_empenhos():
                 try:
                     df_existente = pd.read_sql('SELECT numero_ne FROM notas_empenho', con=engine)
                     if not df_existente.empty:
-                        df_para_banco = df_para_banco[~df_para_banco['numero_ne'].isin(df_existente['numero_ne'])]
+                        df_para_banco = df_para_banco[~df_para_banco['numero_ne'].astype(str).str.strip().isin(df_existente['numero_ne'].astype(str).str.strip())]
                 except Exception:
                     pass 
                 
@@ -180,7 +185,9 @@ def gerenciar_empenhos():
             
             try:
                 df_contratos = pd.read_sql('SELECT numero_contrato AS contrato_via_sei, processo_sei FROM resumo_contratos WHERE processo_sei IS NOT NULL', con=engine)
-                df_contratos = df_contratos[df_contratos['processo_sei'].str.strip() != '']
+                df_contratos['processo_sei'] = df_contratos['processo_sei'].astype(str).str.strip()
+                df_contratos = df_contratos[df_contratos['processo_sei'] != '']
+                df_exib_ne['processo_sei'] = df_exib_ne['processo_sei'].fillna('').astype(str).str.strip()
                 df_contratos = df_contratos.drop_duplicates(subset=['processo_sei'])
                 
                 df_exib_ne = pd.merge(df_exib_ne, df_contratos, on='processo_sei', how='left')
