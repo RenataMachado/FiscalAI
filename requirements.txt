@@ -1,7 +1,7 @@
 opencv-python
 numpy
 pytesseract
-streamlit
+streamlit>=1.46
 streamlit-theme
 pandas
 pdf2image

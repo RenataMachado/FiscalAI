@@ -14,11 +14,13 @@ from nfe_app.extract_empenho import (
     extrai_processo_sei_empenho, extrai_cnpj_empenho, extrai_numero_contrato_empenho,
     extrai_natureza_empenho, extrai_valor_empenho, extrai_assunto_empenho, extrai_ug_empenho,
 )
+from nfe_app.ui_helpers import registrar_tokens, mostrar_consumo_tokens
 from nfe_app.formatters import formata_valor, converter_float, texto_limpo_ia
 
 def gerenciar_empenhos():
     st.header("🧾 Leitura e Upload de Notas de Empenho (NE)")
     st.markdown("Faça o upload do **PDF da Nota de Empenho**.")
+    st.caption("🔍 O OCR lê primeiro. Se ele não encontrar o número da NE ou o valor, a 🤖 IA entra automaticamente.")
     
     col_upload, col_debug = st.columns([3, 1])
     with col_upload:
@@ -26,7 +28,7 @@ def gerenciar_empenhos():
     with col_debug:
         st.write("")
         st.write("")
-        forcar_ocr = st.checkbox("🕵️ Modo Debug (Forçar OCR)", value=False, help="Desativa a IA temporariamente para ver o texto bruto OCR.")
+        mostrar_ocr_bruto = st.checkbox("🕵️ Mostrar saída bruta do OCR", value=False, help="Deixa aberto o texto que o OCR leu, para investigar leituras erradas. Não interfere no uso da IA.")
     
     if arquivos_ne:
         if st.button("Processar Notas de Empenho"):
@@ -38,59 +40,68 @@ def gerenciar_empenhos():
                 bytes_arquivo = arquivo.read()
                 
                 with st.spinner(f"Processando NE {arquivo.name} ({i+1}/{total})..."):
-                    usou_ia_com_sucesso = False
                     num_ne = proc_sei = cnpj = num_cont = nat_desp = fonte = ug = assunto = ""
                     valor = 0.0
-                    
-                    if not forcar_ocr:
+                    origem = ""
+
+                    # ===== PLANO A: OCR + regex =====
+                    imagens = convert_nota_fiscal(bytes_arquivo, "pdf")
+                    if imagens:
+                        df_ocr_ne = extrair_dados_ocr_tabular(imagens)
+                        texto_ne = reconstruir_texto_corrido(df_ocr_ne)
+
+                        with st.expander(f"🕵️ Ver Saída Bruta do OCR ({arquivo.name})", expanded=mostrar_ocr_bruto):
+                            st.write("**1. Texto Corrido Montado pelo OCR:**")
+                            st.info(texto_ne)
+                            st.write("**2. Tabela de Leitura (DataFrame):**")
+                            colunas_debug = [c for c in ['text', 'block_num', 'line_num', 'conf'] if c in df_ocr_ne.columns]
+                            st.dataframe(df_ocr_ne[colunas_debug])
+
+                        num_ne = extrair_numero_empenho(texto_ne)
+                        proc_sei = extrai_processo_sei_empenho(texto_ne)
+                        cnpj = extrai_cnpj_empenho(texto_ne)
+                        num_cont = extrai_numero_contrato_empenho(texto_ne)
+                        nat_desp = extrai_natureza_empenho(texto_ne)
+                        fonte = extrai_fonte_empenho(texto_ne)
+                        valor = extrai_valor_empenho(texto_ne)
+                        ug = extrai_ug_empenho(texto_ne)
+                        assunto = extrai_assunto_empenho(texto_ne)
+                        origem = "🔍 OCR"
+
+                    # Regra para considerar a leitura do OCR boa o suficiente
+                    ocr_com_sucesso = bool(num_ne) and valor > 0
+
+                    # ===== PLANO B: IA (só se o OCR não achou os dados principais) =====
+                    if ocr_com_sucesso:
+                        st.toast(f"🔍 OCR leu a NE {arquivo.name} com sucesso!")
+                    else:
+                        st.toast(f"⚠️ OCR não encontrou os dados de {arquivo.name}. Acionando Plano B (IA)...")
                         try:
                             dados_ia = extrair_dados_empenho_via_ia(bytes_arquivo, arquivo.name)
-                            
-                            num_ne = texto_limpo_ia(dados_ia.get("numero_empenho"))
-                            proc_sei = texto_limpo_ia(dados_ia.get("processo_sei"))
-                            cnpj = texto_limpo_ia(dados_ia.get("cnpj_credor"))
-                            num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
-                            nat_desp = texto_limpo_ia(dados_ia.get("natureza_despesa"))
-                            fonte = texto_limpo_ia(dados_ia.get("fonte_recurso"))
-                            valor = converter_float(dados_ia.get("valor_empenhado"))
-                            ug = texto_limpo_ia(dados_ia.get("ug"))
-                            assunto = texto_limpo_ia(dados_ia.get("assunto"))
-                            
-                            if num_ne and valor > 0:
-                                usou_ia_com_sucesso = True
-                                st.toast(f"🤖 IA extraiu dados da NE {arquivo.name} com sucesso!")
-                            time.sleep(4)
-                            
-                        except Exception as e:
-                            st.toast(f"⚠️ IA falhou para {arquivo.name} ({e}). Usando OCR...")
-                            usou_ia_com_sucesso = False
-                    else:
-                        st.toast("Modo Debug Ativado: IA ignorada. Rodando OCR puro...")
+                            registrar_tokens(arquivo.name, "Nota de Empenho", dados_ia)
 
-                    if not usou_ia_com_sucesso:
-                        imagens = convert_nota_fiscal(bytes_arquivo, "pdf")
-                        if imagens:
-                            df_ocr_ne = extrair_dados_ocr_tabular(imagens)
-                            texto_ne = reconstruir_texto_corrido(df_ocr_ne)
-                            
-                            with st.expander(f"🕵️ Ver Saída Bruta do OCR ({arquivo.name})", expanded=forcar_ocr):
-                                st.write("**1. Texto Corrido Montado pelo OCR:**")
-                                st.info(texto_ne)
-                                st.write("**2. Tabela de Leitura (DataFrame):**")
-                                st.dataframe(df_ocr_ne[['text', 'block_num', 'line_num', 'conf']])
-                            
-                            num_ne = extrair_numero_empenho(texto_ne)
-                            proc_sei = extrai_processo_sei_empenho(texto_ne)
-                            cnpj = extrai_cnpj_empenho(texto_ne)
-                            num_cont = extrai_numero_contrato_empenho(texto_ne)
-                            nat_desp = extrai_natureza_empenho(texto_ne)
-                            fonte = extrai_fonte_empenho(texto_ne)
-                            valor = extrai_valor_empenho(texto_ne)
-                            ug = extrai_ug_empenho(texto_ne)
-                            assunto = extrai_assunto_empenho(texto_ne)
-                        else:
-                            st.error(f"Falha ao converter o PDF {arquivo.name}.")
-                            continue
+                            ia_num_ne = texto_limpo_ia(dados_ia.get("numero_empenho"))
+                            ia_valor = converter_float(dados_ia.get("valor_empenhado"))
+
+                            if ia_num_ne and ia_valor > 0:
+                                num_ne, valor = ia_num_ne, ia_valor
+                                proc_sei = texto_limpo_ia(dados_ia.get("processo_sei"))
+                                cnpj = texto_limpo_ia(dados_ia.get("cnpj_credor"))
+                                num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
+                                nat_desp = texto_limpo_ia(dados_ia.get("natureza_despesa"))
+                                fonte = texto_limpo_ia(dados_ia.get("fonte_recurso"))
+                                ug = texto_limpo_ia(dados_ia.get("ug"))
+                                assunto = texto_limpo_ia(dados_ia.get("assunto"))
+                                origem = "🤖 IA"
+                                st.toast(f"🤖 IA extraiu dados da NE {arquivo.name} com sucesso!")
+                            else:
+                                st.warning(f"A IA também não encontrou os dados de {arquivo.name}. Mantidos os dados do OCR; confira antes de salvar.")
+                        except Exception as e:
+                            st.warning(f"IA (Plano B) falhou em {arquivo.name}. Mantidos os dados do OCR. Motivo: {e}")
+
+                    if not origem:
+                        st.error(f"Falha ao ler o PDF {arquivo.name} (nem OCR nem IA conseguiram).")
+                        continue
                     
                     lista_ne_extraidas.append({
                         "numero_ne": num_ne,
@@ -102,13 +113,16 @@ def gerenciar_empenhos():
                         "valor_empenhado": valor,
                         "ug": ug,
                         "assunto": assunto,
-                        "arquivo_origem": arquivo.name
+                        "arquivo_origem": arquivo.name,
+                        "origem_leitura": origem
                     })
                     
                 progresso.progress((i + 1) / total)
                 
             st.session_state['nes_extraidas'] = lista_ne_extraidas
             st.success("Leitura das Notas de Empenho concluída!")
+
+    mostrar_consumo_tokens()
 
     if 'nes_extraidas' in st.session_state:
         st.divider()
@@ -146,7 +160,8 @@ def gerenciar_empenhos():
                 "valor_empenhado": st.column_config.NumberColumn("Valor Empenhado", format="R$ %.2f"),
                 "ug": st.column_config.TextColumn("UG"),
                 "assunto": st.column_config.TextColumn("Assunto"),
-                "arquivo_origem": st.column_config.TextColumn("Arquivo PDF")
+                "arquivo_origem": st.column_config.TextColumn("Arquivo PDF"),
+                "origem_leitura": st.column_config.TextColumn("Lido por", disabled=True)
             }
         )
         

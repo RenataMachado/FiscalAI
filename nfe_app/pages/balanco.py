@@ -104,7 +104,7 @@ def balanco_nota_fiscal():
             fig1 = px.bar(df_faturamento, x='valor_total', y='Arquivo', orientation='h',
                           title="Faturamento Bruto por Empresa",
                           labels={'Arquivo': 'Empresa', 'valor_total': 'Faturamento (R$)'},
-                          color_discrete_sequence=['#005b96'])
+                          color_discrete_sequence=['#0F6E8C'])
             fig1.update_layout(yaxis={'categoryorder':'total ascending'}, margin=dict(l=20, r=20, t=40, b=20))
             st.plotly_chart(fig1, use_container_width=True)
             
@@ -114,7 +114,7 @@ def balanco_nota_fiscal():
             fig2 = px.bar(df_impostos, x='valor_ir', y='Arquivo', orientation='h',
                           title="Impostos Retidos (IR) por Empresa",
                           labels={'Arquivo': 'Empresa', 'valor_ir': 'Imposto Retido (R$)'},
-                          color_discrete_sequence=['#d62728'])
+                          color_discrete_sequence=['#0057D9'])
             fig2.update_layout(yaxis={'categoryorder':'total ascending'}, margin=dict(l=20, r=20, t=40, b=20))
             st.plotly_chart(fig2, use_container_width=True)
             

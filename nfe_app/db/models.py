@@ -3,7 +3,7 @@
 Modelos SQLAlchemy (ORM) que descrevem as tabelas do banco.
 
 """
-from sqlalchemy import Column, Integer, String, Text, Numeric, DateTime, func
+from sqlalchemy import Column, Integer, String, Text, Numeric, DateTime, Boolean, CheckConstraint, func, true
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -67,4 +67,46 @@ class NotaEmpenho(Base):
     valor_empenhado = Column(Numeric(14, 2))
     ug = Column(String(20))
     assunto = Column(Text)
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+
+class Usuario(Base):
+    """
+    Tabela: usuarios -- lista de pessoas AUTORIZADAS a usar o sistema.
+
+    A senha em si NUNCA fica aqui: só o "hash" dela (veja nfe_app/senhas.py).
+    Para bloquear alguém, basta ativo = False.
+    """
+    __tablename__ = "usuarios"
+    __table_args__ = (CheckConstraint("perfil IN ('admin', 'processador', 'consulta')", name="ck_usuarios_perfil"),)
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False, unique=True)  # sempre em minúsculas
+    nome = Column(String(255))
+    perfil = Column(String(20), nullable=False, server_default="consulta")  # admin | processador | consulta
+    ativo = Column(Boolean, nullable=False, server_default=true())
+    ultimo_acesso = Column(DateTime(timezone=True))
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    senha_hash = Column(String(255))  # vazio = ainda sem senha (não consegue entrar)
+    tentativas_falhas = Column(Integer, nullable=False, server_default="0")  # senhas erradas seguidas
+    bloqueado_ate = Column(DateTime(timezone=True))  # preenchido após muitas senhas erradas
+    aprovado = Column(Boolean, nullable=False, server_default=true())  # False = pedido de acesso aguardando
+    pedido_em = Column(DateTime(timezone=True))
+    motivo_pedido = Column(Text)
+    senha_temporaria_hash = Column(String(255))  # senha enviada por e-mail (só o hash)
+    senha_temporaria_expira = Column(DateTime(timezone=True))
+    senha_temporaria_criada_em = Column(DateTime(timezone=True))
+
+
+class RegistroAcesso(Base):
+    """
+    Tabela: registro_acessos -- auditoria de entradas no sistema.
+    Guarda também as tentativas que deram errado (senha incorreta, conta bloqueada...).
+    """
+    __tablename__ = "registro_acessos"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255))
+    evento = Column(String(30))  # login_ok | login_falhou | login_bloqueado | conta_bloqueada | usuario_inativo | logout | sessao_expirada
+    # pedido_acesso | acesso_aprovado | pedido_recusado | senha_temporaria_enviada | senha_trocada | ...
+    detalhe = Column(Text)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

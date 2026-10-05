@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Pacote de banco de dados: modelos ORM usados pelo Alembic."""
-from nfe_app.db.models import Base, NotaFiscal, ResumoContrato, TermoAditivo, NotaEmpenho
+from nfe_app.db.models import (
+    Base, NotaFiscal, ResumoContrato, TermoAditivo, NotaEmpenho, Usuario, RegistroAcesso,
+)
 
 __all__ = [
     "Base",
@@ -8,4 +10,6 @@ __all__ = [
     "ResumoContrato",
     "TermoAditivo",
     "NotaEmpenho",
+    "Usuario",
+    "RegistroAcesso",
 ]

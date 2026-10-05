@@ -13,75 +13,81 @@ from pathlib import Path
 
 import streamlit as st
 
+from nfe_app import tema
+from nfe_app.auth import exigir_login, mostrar_usuario_na_barra_lateral, pagina_minha_senha
 from nfe_app.pages.processar_nota import processa_nota
 from nfe_app.pages.balanco import balanco_nota_fiscal
 from nfe_app.pages.contratos import gerenciar_contratos
 from nfe_app.pages.aditivos import gerenciar_aditivos
 from nfe_app.pages.empenhos import gerenciar_empenhos
 from nfe_app.pages.vigencia import acompanhamento_contratos
+from nfe_app.pages.usuarios import gerenciar_usuarios
 
 # Pasta onde está este arquivo. Assim as imagens são encontradas
 # mesmo que você rode o comando a partir de outra pasta.
 PASTA_BASE = Path(__file__).resolve().parent
-LOGO_ESCURO = PASTA_BASE / "images" / "SP-4.png"    # usado no tema escuro
-LOGO_CLARO = PASTA_BASE / "images" / "SP-4-P.png"   # usado no tema claro
+LOGO_BRANCO = PASTA_BASE / "images" / "SP-4.png"     # para fundos escuros (barra lateral e tela de entrada)
+LOGO_COLORIDO = PASTA_BASE / "images" / "SP-4-P.png" # para fundos claros
 
-# Cada página: (texto do botão, nome interno, função que desenha a tela)
+# Cada página: (texto do botão, nome interno, função que desenha a tela, perfis que podem ver)
+#   admin       -> tudo, inclusive a tela Usuários
+#   processador -> processa notas, contratos, aditivos e empenhos + Balanço e Vigência
+#   consulta    -> só Balanço e Vigência
+TODOS = ("admin", "processador", "consulta")
+PROCESSAMENTO = ("admin", "processador")
+SO_ADMIN = ("admin",)
 PAGINAS = [
-    ("📄 Processador Nota", "Processar Nota", processa_nota),
-    ("📊 Balanço", "Balanço (Painel de Controle)", balanco_nota_fiscal),
-    ("📑 Resumos Contratuais", "Resumos Contratuais", gerenciar_contratos),
-    ("➕ Termos Aditivos", "Termos Aditivos", gerenciar_aditivos),
-    ("🧾 Notas de Empenho", "Notas de Empenho", gerenciar_empenhos),
-    ("⏱️ Acompanhamento de Vigência", "Acompanhamento Vigência", acompanhamento_contratos),
+    ("📄 Processador Nota", "Processar Nota", processa_nota, PROCESSAMENTO),
+    ("📊 Balanço", "Balanço (Painel de Controle)", balanco_nota_fiscal, TODOS),
+    ("📑 Resumos Contratuais", "Resumos Contratuais", gerenciar_contratos, PROCESSAMENTO),
+    ("➕ Termos Aditivos", "Termos Aditivos", gerenciar_aditivos, PROCESSAMENTO),
+    ("🧾 Notas de Empenho", "Notas de Empenho", gerenciar_empenhos, PROCESSAMENTO),
+    ("⏱️ Acompanhamento de Vigência", "Acompanhamento Vigência", acompanhamento_contratos, TODOS),
+    ("👥 Usuários", "Usuários", gerenciar_usuarios, SO_ADMIN),
+    ("🔑 Minha senha", "Minha senha", pagina_minha_senha, TODOS),
 ]
 
 
-def detectar_tema_escuro():
-    """
-    Descobre se o Streamlit está no tema escuro.
-    Se o pacote streamlit-theme não estiver instalado ou der erro,
-    o app continua funcionando (usa o logo do tema escuro por padrão).
-    """
-    try:
-        from streamlit_theme import st_theme
-        tema = st_theme()
-        if tema:
-            return tema.get("base") == "dark"
-    except Exception:
-        pass
-    try:
-        return st.get_option("theme.base") != "light"
-    except Exception:
-        return True
+def _ir_para_pagina(nome):
+    st.session_state["pagina_atual"] = nome
 
 
 def main():
-    st.set_page_config(page_title="Leitor NFe Tabular", layout="wide")
+    st.set_page_config(page_title="Gestão de Notas Fiscais · SP Águas", page_icon="🧾", layout="wide")
 
-    caminho_logo = LOGO_ESCURO if detectar_tema_escuro() else LOGO_CLARO
+    # Cores, fontes e detalhes no padrão da apresentação da SP Águas (veja nfe_app/tema.py)
+    tema.aplicar_tema()
 
-    col1, col2 = st.columns([5, 1])
-    with col1:
-        st.title("Sistema de Gestão de Notas Fiscais")
-    with col2:
-        st.write("")
-        st.write("")
-        if caminho_logo.exists():
-            st.image(str(caminho_logo), width=150)
+    # LOGIN: se a pessoa ainda não entrou (ou foi desativada), esta função
+    # mostra a tela de login e PARA o app aqui. Nada abaixo roda sem login.
+    usuario = exigir_login(logo=LOGO_BRANCO)
 
-    if 'pagina_atual' not in st.session_state:
-        st.session_state['pagina_atual'] = PAGINAS[0][1]
+    # Só as páginas que o perfil desta pessoa pode ver
+    paginas_permitidas = [p for p in PAGINAS if usuario["perfil"] in p[3]]
+    nomes_permitidos = [p[1] for p in paginas_permitidas]
+    # Se a página guardada não é permitida para este perfil, volta para a primeira permitida
+    if st.session_state.get("pagina_atual") not in nomes_permitidos:
+        st.session_state["pagina_atual"] = nomes_permitidos[0]
 
-    st.sidebar.subheader("Navegação")
-    for rotulo, nome, _ in PAGINAS:
-        if st.sidebar.button(rotulo, use_container_width=True, key=f"nav_{nome}"):
-            st.session_state['pagina_atual'] = nome
-
+    # Barra lateral: logo, usuário e navegação (a página atual fica destacada)
+    if LOGO_BRANCO.exists():
+        st.sidebar.image(str(LOGO_BRANCO), width=150)
+    mostrar_usuario_na_barra_lateral(usuario)
     st.sidebar.divider()
+    tema.rotulo_lateral("Navegação")
+    for rotulo, nome, _, _ in paginas_permitidas:
+        atual = st.session_state["pagina_atual"] == nome
+        st.sidebar.button(rotulo, use_container_width=True, key=f"nav_{nome}",
+                          type="primary" if atual else "secondary",
+                          on_click=_ir_para_pagina, args=(nome,))
 
-    for _, nome, funcao_pagina in PAGINAS:
-        if st.session_state['pagina_atual'] == nome:
+    # Topo das páginas, como nos slides
+    tema.topo_da_pagina("Gestão de Notas Fiscais")
+
+    # Só executa páginas da lista PERMITIDA (dupla checagem do perfil)
+    for _, nome, funcao_pagina, _ in paginas_permitidas:
+        if st.session_state["pagina_atual"] == nome:
+            tema.rotulo(nome)  # só o nome da página, sem número
             funcao_pagina()
             break
 

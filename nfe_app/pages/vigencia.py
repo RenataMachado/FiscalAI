@@ -107,7 +107,7 @@ def acompanhamento_contratos():
                 fig = px.pie(
                     df_pizza, values='Valores', names='Status', hole=0.45, 
                     title=f" {dados_contrato['numero_contrato']}", color='Status',
-                    color_discrete_map={'Executado': '#d62728', 'Saldo': '#2ca02c'}
+                    color_discrete_map={'Executado': '#0F6E8C', 'Saldo': '#00A859'}
                 )
                 fig.update_traces(textinfo='percent+label', textfont_size=14)
                 st.plotly_chart(fig, use_container_width=True)
@@ -193,7 +193,7 @@ def acompanhamento_contratos():
                     fig_tempo = px.bar(
                         df_barra, x='Dias', y='Fase', orientation='h',
                         title=f"Linha do Tempo: Contrato {contrato_escolhido} ({vigencia_meses} meses totais)",
-                        text='Label', color='Fase', color_discrete_map={'Tempo Decorrido': '#ff7f0e', 'Tempo Restante': '#1f77b4'}
+                        text='Label', color='Fase', color_discrete_map={'Tempo Decorrido': '#0A3350', 'Tempo Restante': '#22B8CF'}
                     )
                     fig_tempo.update_layout(xaxis_title="Dias Totais", yaxis_title="")
                     st.plotly_chart(fig_tempo, use_container_width=True)

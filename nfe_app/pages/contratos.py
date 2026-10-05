@@ -3,21 +3,22 @@ Pagina: Resumos Contratuais -- leitura, extracao via IA e cadastro de contratos.
 """
 import streamlit as st
 import pandas as pd
-import time
 
 from nfe_app.config import engine
 from nfe_app.ocr_utils import convert_nota_fiscal, extrair_dados_ocr_tabular, reconstruir_texto_corrido
 from nfe_app.extract_contratos_ia import (
-    extrair_dados_via_ia_gemini, extrai_processo_sei, extrair_numero_contrato_pdf,
+    extrair_dados_via_ia, extrai_processo_sei, extrair_numero_contrato_pdf,
     extrair_numero_contrato_spaguas, extrair_valor_contrato_pdf,
     extrair_vigencia_contrato_pdf, converter_vigencia_para_inteiro,
 )
+from nfe_app.ui_helpers import registrar_tokens, mostrar_consumo_tokens
 from nfe_app.formatters import formata_valor, converter_float, converter_int, texto_limpo_ia
 
 def gerenciar_contratos():
     st.header("📑 Leitura e Upload de Contratos")
     st.markdown("Faça o upload do **PDF do Contrato**. Para extrair o número do contrato, processo SEI, valor total e vigência.")
     arquivos_contrato = st.file_uploader("Upload dos Resumos em PDF", type=["pdf"], accept_multiple_files=True, key="uploader_contratos")
+    st.caption("🔍 O OCR lê primeiro. Se ele não encontrar o número do contrato ou o valor, a 🤖 IA entra automaticamente.")
     
     if arquivos_contrato:
         if st.button("Processar Contratos PDF"):
@@ -29,47 +30,54 @@ def gerenciar_contratos():
                 bytes_arquivo = arquivo.read()
                 
                 with st.spinner(f"Processando contrato {arquivo.name} ({i+1}/{total})..."):
-                    usou_ia_com_sucesso = False
                     num_cont = num_cont_spaguas = num_sei = ""
                     val_cont, tempo_vig_inteiro = 0.0, 0
-                    
-                    try:
-                        dados_ia = extrair_dados_via_ia_gemini(bytes_arquivo, arquivo.name, tipo_doc="contrato")
-                        
-                        num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
-                        num_cont_spaguas = texto_limpo_ia(dados_ia.get("numero_contrato_spaguas"))
-                        num_sei = texto_limpo_ia(dados_ia.get("processo_sei"))
-                        val_cont = converter_float(dados_ia.get("valor_contrato"))
-                        tempo_vig_inteiro = converter_int(dados_ia.get("vigencia_meses"))
-                        
-                        if (num_cont or num_cont_spaguas) and val_cont > 0:
-                            usou_ia_com_sucesso = True
-                            st.toast(f"🤖 IA extraiu dados de {arquivo.name} com sucesso!")
-                            
-                        time.sleep(4) 
-                        
-                    except Exception as e:
-                        # --- EXIBE O ERRO DETALHADO DA IA NA TELA ---
-                        st.error(f"Erro detalhado da IA no arquivo {arquivo.name}: {str(e)}")
-                        st.toast(f"⚠️ IA falhou para {arquivo.name}. Acionando Plano B (OCR)...")
-                        usou_ia_com_sucesso = False
+                    origem = ""
 
-                    if not usou_ia_com_sucesso:
-                        imagens = convert_nota_fiscal(bytes_arquivo, "pdf")
-                        if imagens:
-                            df_ocr_contrato = extrair_dados_ocr_tabular(imagens)
-                            texto_contrato = reconstruir_texto_corrido(df_ocr_contrato)
-                            
-                            num_cont = extrair_numero_contrato_pdf(texto_contrato, df_ocr_contrato)
-                            num_cont_spaguas = extrair_numero_contrato_spaguas(texto_contrato, df_ocr_contrato)
-                            num_sei = extrai_processo_sei(texto_contrato, df_ocr_contrato)
-                            
-                            val_cont = extrair_valor_contrato_pdf(texto_contrato, df_ocr_contrato)
-                            texto_vig = extrair_vigencia_contrato_pdf(texto_contrato, df_ocr_contrato)
-                            tempo_vig_inteiro = converter_vigencia_para_inteiro(texto_vig)
-                        else:
-                            st.error(f"Falha crítica: Não foi possível ler o arquivo {arquivo.name} em nenhum método.")
-                            continue
+                    # ===== PLANO A: OCR + regex =====
+                    imagens = convert_nota_fiscal(bytes_arquivo, "pdf")
+                    if imagens:
+                        df_ocr_contrato = extrair_dados_ocr_tabular(imagens)
+                        texto_contrato = reconstruir_texto_corrido(df_ocr_contrato)
+
+                        num_cont = extrair_numero_contrato_pdf(texto_contrato, df_ocr_contrato)
+                        num_cont_spaguas = extrair_numero_contrato_spaguas(texto_contrato, df_ocr_contrato)
+                        num_sei = extrai_processo_sei(texto_contrato, df_ocr_contrato)
+                        val_cont = extrair_valor_contrato_pdf(texto_contrato, df_ocr_contrato)
+                        texto_vig = extrair_vigencia_contrato_pdf(texto_contrato, df_ocr_contrato)
+                        tempo_vig_inteiro = converter_vigencia_para_inteiro(texto_vig)
+                        origem = "🔍 OCR"
+
+                    # Regra para considerar a leitura do OCR boa o suficiente
+                    ocr_com_sucesso = bool(num_cont or num_cont_spaguas) and val_cont > 0
+
+                    # ===== PLANO B: IA (só se o OCR não achou os dados principais) =====
+                    if ocr_com_sucesso:
+                        st.toast(f"🔍 OCR leu {arquivo.name} com sucesso!")
+                    else:
+                        st.toast(f"⚠️ OCR não encontrou os dados de {arquivo.name}. Acionando Plano B (IA)...")
+                        try:
+                            dados_ia = extrair_dados_via_ia(bytes_arquivo, arquivo.name, tipo_doc="contrato")
+                            registrar_tokens(arquivo.name, "Contrato", dados_ia)
+
+                            ia_num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
+                            ia_num_spaguas = texto_limpo_ia(dados_ia.get("numero_contrato_spaguas"))
+                            ia_valor = converter_float(dados_ia.get("valor_contrato"))
+
+                            if (ia_num_cont or ia_num_spaguas) and ia_valor > 0:
+                                num_cont, num_cont_spaguas, val_cont = ia_num_cont, ia_num_spaguas, ia_valor
+                                num_sei = texto_limpo_ia(dados_ia.get("processo_sei"))
+                                tempo_vig_inteiro = converter_int(dados_ia.get("vigencia_meses"))
+                                origem = "🤖 IA"
+                                st.toast(f"🤖 IA extraiu dados de {arquivo.name} com sucesso!")
+                            else:
+                                st.warning(f"A IA também não encontrou os dados de {arquivo.name}. Mantidos os dados do OCR; confira antes de salvar.")
+                        except Exception as e:
+                            st.warning(f"IA (Plano B) falhou em {arquivo.name}. Mantidos os dados do OCR. Motivo: {e}")
+
+                    if not origem:
+                        st.error(f"Falha crítica: Não foi possível ler o arquivo {arquivo.name} em nenhum método.")
+                        continue
 
                     if not num_cont or num_cont.upper() in ["NONE", "NULL", ""]:
                         num_cont = arquivo.name.replace('.pdf', '').replace('.PDF', '') if not num_cont_spaguas else ""
@@ -80,13 +88,16 @@ def gerenciar_contratos():
                         "processo_sei": num_sei,
                         "valor_contrato": val_cont,
                         "vigencia_contrato": tempo_vig_inteiro,
-                        "arquivo_origem": arquivo.name
+                        "arquivo_origem": arquivo.name,
+                        "origem_leitura": origem
                     })
                     
                 progresso.progress((i + 1) / total)
                 
             st.session_state['contratos_extraidos'] = lista_contratos_extraidos
             st.success("Leitura dos contratos concluída! Confira abaixo.")
+
+    mostrar_consumo_tokens()
 
     if 'contratos_extraidos' in st.session_state:
         st.divider()
@@ -100,7 +111,8 @@ def gerenciar_contratos():
                 "processo_sei": st.column_config.TextColumn("Processo SEI"), 
                 "valor_contrato": st.column_config.NumberColumn("Valor Total do Contrato", format="R$ %.2f"),
                 "vigencia_contrato": st.column_config.NumberColumn("Tempo de Vigência (Meses)", format="%d"),
-                "arquivo_origem": st.column_config.TextColumn("Arquivo PDF")
+                "arquivo_origem": st.column_config.TextColumn("Arquivo PDF"),
+                "origem_leitura": st.column_config.TextColumn("Lido por", disabled=True)
             }
         )
         

@@ -3,21 +3,22 @@ Pagina: Termos Aditivos -- leitura, extracao via IA e vinculacao aos contratos.
 """
 import streamlit as st
 import pandas as pd
-import time
 
 from nfe_app.config import engine
 from nfe_app.ocr_utils import convert_nota_fiscal, extrair_dados_ocr_tabular, reconstruir_texto_corrido
 from nfe_app.extract_contratos_ia import (
-    extrair_dados_via_ia_gemini, extrair_numero_contrato_pdf,
+    extrair_dados_via_ia, extrair_numero_contrato_pdf,
     extrair_numero_contrato_spaguas, extrair_valor_contrato_pdf,
     extrair_vigencia_contrato_pdf, converter_vigencia_para_inteiro,
 )
+from nfe_app.ui_helpers import registrar_tokens, mostrar_consumo_tokens
 from nfe_app.formatters import formata_valor, converter_float, converter_int, texto_limpo_ia
 
 def gerenciar_aditivos():
     st.header("➕ Leitura e Upload de Termos Aditivos (PDF)")
     st.markdown("Faça o upload do **PDF do Termo Aditivo**.")
     arquivos_aditivo = st.file_uploader("Upload dos Aditivos em PDF", type=["pdf"], accept_multiple_files=True, key="uploader_aditivos")
+    st.caption("🔍 O OCR lê primeiro. Se ele não encontrar o número do contrato, a 🤖 IA entra automaticamente.")
     
     if arquivos_aditivo:
         if st.button("Processar Termos Aditivos"):
@@ -29,43 +30,52 @@ def gerenciar_aditivos():
                 bytes_arquivo = arquivo.read()
                 
                 with st.spinner(f"Processando aditivo {arquivo.name} ({i+1}/{total})..."):
-                    usou_ia_com_sucesso = False
                     num_cont = num_cont_spaguas = ""
                     val_adic, meses_extra = 0.0, 0
-                    
-                    try:
-                        dados_ia = extrair_dados_via_ia_gemini(bytes_arquivo, arquivo.name, tipo_doc="aditivo")
-                        
-                        num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
-                        num_cont_spaguas = texto_limpo_ia(dados_ia.get("numero_contrato_spaguas"))
-                        val_adic = converter_float(dados_ia.get("valor_aditivo"))
-                        meses_extra = converter_int(dados_ia.get("vigencia_aditivo"))
-                        
-                        if num_cont or num_cont_spaguas:
-                            usou_ia_com_sucesso = True
-                            st.toast(f"🤖 IA extraiu dados de {arquivo.name} com sucesso!")
-                            
-                        time.sleep(4) 
-                        
-                    except Exception as e:
-                        st.toast(f"⚠️ IA falhou para {arquivo.name} ({e}). Usando OCR...")
-                        usou_ia_com_sucesso = False
+                    origem = ""
 
-                    if not usou_ia_com_sucesso:
-                        imagens = convert_nota_fiscal(bytes_arquivo, "pdf")
-                        if imagens:
-                            df_ocr_aditivo = extrair_dados_ocr_tabular(imagens)
-                            texto_aditivo = reconstruir_texto_corrido(df_ocr_aditivo)
-                            
-                            num_cont = extrair_numero_contrato_pdf(texto_aditivo, df_ocr_aditivo)
-                            num_cont_spaguas = extrair_numero_contrato_spaguas(texto_aditivo, df_ocr_aditivo)
-                            
-                            val_adic = extrair_valor_contrato_pdf(texto_aditivo, df_ocr_aditivo)
-                            texto_vig = extrair_vigencia_contrato_pdf(texto_aditivo, df_ocr_aditivo)
-                            meses_extra = converter_vigencia_para_inteiro(texto_vig)
-                        else:
-                            st.error(f"Falha ao converter o PDF {arquivo.name}.")
-                            continue
+                    # ===== PLANO A: OCR + regex =====
+                    imagens = convert_nota_fiscal(bytes_arquivo, "pdf")
+                    if imagens:
+                        df_ocr_aditivo = extrair_dados_ocr_tabular(imagens)
+                        texto_aditivo = reconstruir_texto_corrido(df_ocr_aditivo)
+
+                        num_cont = extrair_numero_contrato_pdf(texto_aditivo, df_ocr_aditivo)
+                        num_cont_spaguas = extrair_numero_contrato_spaguas(texto_aditivo, df_ocr_aditivo)
+                        val_adic = extrair_valor_contrato_pdf(texto_aditivo, df_ocr_aditivo)
+                        texto_vig = extrair_vigencia_contrato_pdf(texto_aditivo, df_ocr_aditivo)
+                        meses_extra = converter_vigencia_para_inteiro(texto_vig)
+                        origem = "🔍 OCR"
+
+                    # Regra para considerar a leitura do OCR boa o suficiente
+                    ocr_com_sucesso = bool(num_cont or num_cont_spaguas)
+
+                    # ===== PLANO B: IA (só se o OCR não achou os dados principais) =====
+                    if ocr_com_sucesso:
+                        st.toast(f"🔍 OCR leu {arquivo.name} com sucesso!")
+                    else:
+                        st.toast(f"⚠️ OCR não encontrou os dados de {arquivo.name}. Acionando Plano B (IA)...")
+                        try:
+                            dados_ia = extrair_dados_via_ia(bytes_arquivo, arquivo.name, tipo_doc="aditivo")
+                            registrar_tokens(arquivo.name, "Aditivo", dados_ia)
+
+                            ia_num_cont = texto_limpo_ia(dados_ia.get("numero_contrato"))
+                            ia_num_spaguas = texto_limpo_ia(dados_ia.get("numero_contrato_spaguas"))
+
+                            if ia_num_cont or ia_num_spaguas:
+                                num_cont, num_cont_spaguas = ia_num_cont, ia_num_spaguas
+                                val_adic = converter_float(dados_ia.get("valor_aditivo"))
+                                meses_extra = converter_int(dados_ia.get("vigencia_aditivo"))
+                                origem = "🤖 IA"
+                                st.toast(f"🤖 IA extraiu dados de {arquivo.name} com sucesso!")
+                            else:
+                                st.warning(f"A IA também não encontrou os dados de {arquivo.name}. Mantidos os dados do OCR; confira antes de salvar.")
+                        except Exception as e:
+                            st.warning(f"IA (Plano B) falhou em {arquivo.name}. Mantidos os dados do OCR. Motivo: {e}")
+
+                    if not origem:
+                        st.error(f"Falha ao ler o PDF {arquivo.name} (nem OCR nem IA conseguiram).")
+                        continue
                             
                     if not num_cont or num_cont.upper() in ["NONE", "NULL", ""]:
                         num_cont = arquivo.name.replace('.pdf', '').replace('.PDF', '') if not num_cont_spaguas else ""
@@ -75,13 +85,16 @@ def gerenciar_aditivos():
                         "numero_contrato_spaguas": num_cont_spaguas,
                         "valor_aditivo": val_adic,
                         "vigencia_aditivo": meses_extra,
-                        "arquivo_origem": arquivo.name
+                        "arquivo_origem": arquivo.name,
+                        "origem_leitura": origem
                     })
                     
                 progresso.progress((i + 1) / total)
                 
             st.session_state['aditivos_extraidos'] = lista_aditivos_extraidos
             st.success("Leitura dos aditivos concluída! Confira abaixo.")
+
+    mostrar_consumo_tokens()
 
     if 'aditivos_extraidos' in st.session_state:
         st.divider()
@@ -94,7 +107,8 @@ def gerenciar_aditivos():
                 "numero_contrato_spaguas": st.column_config.TextColumn("Nº Contrato Vinculado (SP Águas)"),
                 "valor_aditivo": st.column_config.NumberColumn("Valor Aditivado", format="R$ %.2f"),
                 "vigencia_aditivo": st.column_config.NumberColumn("Meses Extras de Vigência", format="%d"),
-                "arquivo_origem": st.column_config.TextColumn("Arquivo PDF")
+                "arquivo_origem": st.column_config.TextColumn("Arquivo PDF"),
+                "origem_leitura": st.column_config.TextColumn("Lido por", disabled=True)
             }
         )
         if st.button("Confirmar e Salvar Aditivos no Banco"):

@@ -1,0 +1,9 @@
+# Cores do sistema no padrão da apresentação da SP Águas.
+# O restante do visual (barra lateral escura, títulos, ondas) fica em nfe_app/tema.py.
+[theme]
+base = "light"
+primaryColor = "#0F6E8C"
+backgroundColor = "#F7FAFB"
+secondaryBackgroundColor = "#EEF5F7"
+textColor = "#0B2A3F"
+font = "sans serif"
